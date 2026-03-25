@@ -327,23 +327,126 @@ npm run dev
 
 ---
 
-# 🧠 System Architecture
+# 🧠 System Architecture & Workflow
+
+## 🔄 PayWise Decision Flow
+
+The system follows a **deterministic + AI-assisted pipeline** to convert raw financial data into actionable decisions.
+
+---
+
+### 📌 Step-by-Step Flow
 
 ```text
-[Frontend (React)]
-        ↓
-[FastAPI Backend]
-        ↓
-[Step 1: Ingestion]
-        ↓
-[Step 2: Processing]
-        ↓
-[Step 3: Risk Engine]
-        ↓
-[Groq API (AI Outputs)]
+START
+  ↓
+User Adds Financial Data
+  ↓
+Collect Data (CSV / PDF / Manual Entry)
+  ↓
+Data Processing & Normalization
+  → Cleaning, Deduplication, Categorization
+  ↓
+Convert to Structured Financial State
+  → Cash Balance, Payables, Receivables
+  ↓
+Simulate Future Cash Flow (Timeline Engine)
+  ↓
+Is Cash Sufficient?
+  ├── YES → Show Stable Dashboard → END
+  │
+  └── NO → Continue ↓
+          ↓
+    Detect Cash Shortfall
+          ↓
+    Analyze Obligations
+    → Urgency (due date)
+    → Penalty (financial + relationship)
+    → Flexibility
+          ↓
+    Simulate Possible Actions
+    → Pay Now
+    → Delay Payment
+    → Partial Payment
+          ↓
+    Select Optimal Decision (Deterministic Logic)
+          ↓
+    Generate Action Plan
+    → What to Pay
+    → What to Delay
+    → Follow-ups
+          ↓
+    Generate Explanation + Email (Groq API)
+          ↓
+END
 ```
 
 ---
+
+## 🧩 Architectural Layers
+
+### 1. 📥 Input Layer
+
+* Multi-source ingestion:
+
+  * CSV (bank statements)
+  * PDF (invoices)
+  * Images (OCR)
+* Handles fragmented financial inputs
+
+---
+
+### 2. 🔄 Processing Layer (Your Module)
+
+* Data cleaning
+* Normalization
+* Deduplication
+* Categorization:
+
+  * Payables
+  * Receivables
+
+---
+
+### 3. 📊 Simulation Layer
+
+* Cash flow timeline engine
+* Computes:
+
+  * Future balances
+  * Days to zero
+
+---
+
+### 4. 🧠 Decision Engine (Core Logic)
+
+* Fully deterministic:
+
+  * Prioritization rules
+  * Risk scoring
+* Avoids blind LLM dependence
+
+---
+
+### 5. 🤖 AI Layer (Groq API)
+
+* Used ONLY for:
+
+  * Explanation (COT)
+  * Email drafting
+* Not used for calculations
+
+---
+
+### 6. 🎨 Presentation Layer (React)
+
+* Dashboard
+* Risk visualization
+* Action recommendations
+* Timeline graphs
+
+---
+
 
 # 🔮 Future Enhancements
 
