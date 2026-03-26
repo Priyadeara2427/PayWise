@@ -1,0 +1,24 @@
+{
+  "payables": [
+    {
+      "party": "Raj Fabrics",
+      "type": "partial_payment_proposal",
+      "email": "Dear Raj Fabrics,\n\nSubject: Proposal for Partial Payment Arrangement\n\nDear Raj Fabrics,\n\nI hope this message finds you well. \n\nI am writing to discuss our outstanding balance of ₹45,000.00. In light of our current circumstances, I would like to propose a partial payment arrangement to facilitate the settlement of this amount.\n\nI suggest making an immediate payment of 50%, totaling ₹22,500.00. The remaining balance of ₹22,500.00 could then be settled in 2 installments over the next 15 days.\n\nI believe this arrangement will help us maintain our good relationship while ensuring that obligations are met promptly. Please let me know if you find this proposal acceptable or if you would like to discuss further.\n\nThank you for your understanding.\n\nBest regards,\n\n[Your Name]  \n[Your Position]  \n[Your Company]  \n[Your Contact Information]"
+    },
+    {
+      "party": "Friend Loan",
+      "type": "extension_request",
+      "email": "Hey Friend Loan,\n\nSubject: Request for Payment Extension\n\nHey Friend Loan,\n\nI hope you’re doing well! I wanted to reach out regarding the ₹10,000.00 I owe, which is due on March 25, 2026. Would it be possible to extend the payment deadline by 10 days? I’d really appreciate your understanding.\n\nThanks for considering my request!\n\nCheers,  \n[Your Name]\n\nCheers"
+    }
+  ],
+  "receivables": [
+    {
+      "party": "XYZ Corp",
+      "type": "payment_reminder",
+      "email": "Dear XYZ Corp,\n\nSubject: Friendly Payment Reminder\n\nDear XYZ Corp,\n\nI hope this message finds you well. This is a friendly reminder that the payment of ₹35,000.00, which was due on March 18, 2026, is now 7 days overdue. \n\nWe kindly ask you to process this payment at your earliest convenience to avoid any late fees.\n\nThank you for your business.\n\nBest regards,  \n[Your Name]  \n[Your Position]  \n[Your Company]  \n[Your Contact Information]\n\nThank you for your business,\nFinance Team"
+    }
+  ],
+  "summary": {
+    "total_communications": 3
+  }
+}

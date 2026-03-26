@@ -1,0 +1,338 @@
+{
+  "cash_balance": 50000,
+  "payables": [
+    {
+      "transaction_id": "7d03b6e8",
+      "party": "Unknown",
+      "amount": 82.4,
+      "due_date": null,
+      "category": "other",
+      "type": "unknown",
+      "risk_score": 0.5,
+      "penalty": 0,
+      "priority": "medium",
+      "days_late": 0,
+      "partial_payment": {
+        "accepts_partial": true,
+        "minimum_pct": 40
+      }
+    },
+    {
+      "transaction_id": "30daf9bb",
+      "party": "Unknown",
+      "amount": 29.700000000000003,
+      "due_date": null,
+      "category": "other",
+      "type": "unknown",
+      "risk_score": 0.5,
+      "penalty": 0,
+      "priority": "medium",
+      "days_late": 0,
+      "partial_payment": {
+        "accepts_partial": true,
+        "minimum_pct": 40
+      }
+    },
+    {
+      "transaction_id": "41272f02",
+      "party": "Income Tax Department",
+      "amount": 50000.0,
+      "due_date": "2026-03-21",
+      "category": "tax",
+      "type": "tax_authority",
+      "risk_score": 0.8833333333333333,
+      "penalty": 0,
+      "priority": "critical",
+      "urgency": "low",
+      "decision": {
+        "priority": "low",
+        "action": "review",
+        "reason": "",
+        "suggested_terms": {}
+      },
+      "days_late": 5,
+      "invoice_number": null,
+      "gstin": null,
+      "partial_payment": {
+        "accepts_partial": false,
+        "minimum_pct": 100,
+        "minimum_amount": 50000.0,
+        "suggested_pct": 50.0,
+        "max_installments": 1,
+        "installment_days": 15,
+        "notes": ""
+      }
+    },
+    {
+      "transaction_id": "9185b63a",
+      "party": "Fallback Strategy",
+      "amount": 175.0,
+      "due_date": "2026-03-25",
+      "category": "supplier",
+      "type": "vendor",
+      "risk_score": 0.5166666666666667,
+      "penalty": 0,
+      "priority": "high",
+      "urgency": "low",
+      "decision": {
+        "priority": "low",
+        "action": "review",
+        "reason": "",
+        "suggested_terms": {}
+      },
+      "days_late": 1,
+      "invoice_number": null,
+      "gstin": null,
+      "partial_payment": {
+        "accepts_partial": true,
+        "minimum_pct": 40,
+        "minimum_amount": 70.0,
+        "suggested_pct": 50.0,
+        "max_installments": 1,
+        "installment_days": 15,
+        "notes": ""
+      }
+    },
+    {
+      "transaction_id": "1aebb356",
+      "party": "ABC",
+      "amount": 40000.0,
+      "due_date": "2026-04-01",
+      "category": "tax",
+      "type": "government",
+      "risk_score": 0.8,
+      "penalty": 0,
+      "priority": "critical",
+      "urgency": "none",
+      "decision": {
+        "priority": "low",
+        "action": "review",
+        "reason": "",
+        "suggested_terms": {}
+      },
+      "days_late": 0,
+      "invoice_number": null,
+      "gstin": null,
+      "partial_payment": {
+        "accepts_partial": false,
+        "minimum_pct": 40,
+        "minimum_amount": 16000.0,
+        "suggested_pct": 50.0,
+        "max_installments": 1,
+        "installment_days": 15,
+        "notes": ""
+      }
+    }
+  ],
+  "receivables": [],
+  "summary": {
+    "total_payables": 90287.1,
+    "total_receivables": 0,
+    "total_penalties": 0,
+    "net_position": -40287.100000000006,
+    "payables_count": 5,
+    "receivables_count": 0,
+    "total_obligations": 5
+  },
+  "partial_payment_summary": {
+    "partial_available_count": 3,
+    "total_partial_minimum": 114.84,
+    "partial_percentage": 60.0
+  },
+  "category_summary": {
+    "other": {
+      "count": 2,
+      "total_amount": 112.10000000000001,
+      "total_penalty": 0,
+      "partial_available": 2,
+      "items": [
+        {
+          "party": "Unknown",
+          "amount": 82.4,
+          "due_date": null,
+          "priority": "medium",
+          "accepts_partial": true,
+          "min_partial_pct": 0
+        },
+        {
+          "party": "Unknown",
+          "amount": 29.700000000000003,
+          "due_date": null,
+          "priority": "medium",
+          "accepts_partial": true,
+          "min_partial_pct": 0
+        }
+      ]
+    },
+    "tax": {
+      "count": 2,
+      "total_amount": 90000.0,
+      "total_penalty": 0,
+      "partial_available": 0,
+      "items": [
+        {
+          "party": "Income Tax Department",
+          "amount": 50000.0,
+          "due_date": "2026-03-21",
+          "priority": "critical",
+          "accepts_partial": false,
+          "min_partial_pct": 0
+        },
+        {
+          "party": "ABC",
+          "amount": 40000.0,
+          "due_date": "2026-04-01",
+          "priority": "critical",
+          "accepts_partial": false,
+          "min_partial_pct": 0
+        }
+      ]
+    },
+    "supplier": {
+      "count": 1,
+      "total_amount": 175.0,
+      "total_penalty": 0,
+      "partial_available": 1,
+      "items": [
+        {
+          "party": "Fallback Strategy",
+          "amount": 175.0,
+          "due_date": "2026-03-25",
+          "priority": "high",
+          "accepts_partial": true,
+          "min_partial_pct": 0
+        }
+      ]
+    }
+  },
+  "priority_payables": [
+    {
+      "transaction_id": "41272f02",
+      "party": "Income Tax Department",
+      "amount": 50000.0,
+      "due_date": "2026-03-21",
+      "category": "tax",
+      "type": "tax_authority",
+      "risk_score": 0.8833333333333333,
+      "penalty": 0,
+      "priority": "critical",
+      "urgency": "low",
+      "decision": {
+        "priority": "low",
+        "action": "review",
+        "reason": "",
+        "suggested_terms": {}
+      },
+      "days_late": 5,
+      "invoice_number": null,
+      "gstin": null,
+      "partial_payment": {
+        "accepts_partial": false,
+        "minimum_pct": 100,
+        "minimum_amount": 50000.0,
+        "suggested_pct": 50.0,
+        "max_installments": 1,
+        "installment_days": 15,
+        "notes": ""
+      }
+    },
+    {
+      "transaction_id": "1aebb356",
+      "party": "ABC",
+      "amount": 40000.0,
+      "due_date": "2026-04-01",
+      "category": "tax",
+      "type": "government",
+      "risk_score": 0.8,
+      "penalty": 0,
+      "priority": "critical",
+      "urgency": "none",
+      "decision": {
+        "priority": "low",
+        "action": "review",
+        "reason": "",
+        "suggested_terms": {}
+      },
+      "days_late": 0,
+      "invoice_number": null,
+      "gstin": null,
+      "partial_payment": {
+        "accepts_partial": false,
+        "minimum_pct": 40,
+        "minimum_amount": 16000.0,
+        "suggested_pct": 50.0,
+        "max_installments": 1,
+        "installment_days": 15,
+        "notes": ""
+      }
+    },
+    {
+      "transaction_id": "9185b63a",
+      "party": "Fallback Strategy",
+      "amount": 175.0,
+      "due_date": "2026-03-25",
+      "category": "supplier",
+      "type": "vendor",
+      "risk_score": 0.5166666666666667,
+      "penalty": 0,
+      "priority": "high",
+      "urgency": "low",
+      "decision": {
+        "priority": "low",
+        "action": "review",
+        "reason": "",
+        "suggested_terms": {}
+      },
+      "days_late": 1,
+      "invoice_number": null,
+      "gstin": null,
+      "partial_payment": {
+        "accepts_partial": true,
+        "minimum_pct": 40,
+        "minimum_amount": 70.0,
+        "suggested_pct": 50.0,
+        "max_installments": 1,
+        "installment_days": 15,
+        "notes": ""
+      }
+    },
+    {
+      "transaction_id": "7d03b6e8",
+      "party": "Unknown",
+      "amount": 82.4,
+      "due_date": null,
+      "category": "other",
+      "type": "unknown",
+      "risk_score": 0.5,
+      "penalty": 0,
+      "priority": "medium",
+      "days_late": 0,
+      "partial_payment": {
+        "accepts_partial": true,
+        "minimum_pct": 40
+      }
+    },
+    {
+      "transaction_id": "30daf9bb",
+      "party": "Unknown",
+      "amount": 29.700000000000003,
+      "due_date": null,
+      "category": "other",
+      "type": "unknown",
+      "risk_score": 0.5,
+      "penalty": 0,
+      "priority": "medium",
+      "days_late": 0,
+      "partial_payment": {
+        "accepts_partial": true,
+        "minimum_pct": 40
+      }
+    }
+  ],
+  "processing_stats": {
+    "total_files_processed": 1,
+    "total_obligations_raw": 5,
+    "paid_obligations_skipped": 0,
+    "duplicates_removed": 0
+  }
+}
