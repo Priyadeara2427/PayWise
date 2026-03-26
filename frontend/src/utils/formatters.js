@@ -1,35 +1,37 @@
+// src/utils/formatters.js
 export const formatCurrency = (amount) => {
     if (amount === undefined || amount === null) return '₹0';
-    return `₹${amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+    return new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: 'INR',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+    }).format(amount);
 };
 
-export const formatDate = (dateStr) => {
-    if (!dateStr) return 'N/A';
-    try {
-        return new Date(dateStr).toLocaleDateString('en-IN');
-    } catch {
-        return dateStr;
-    }
-};
-
-export const getRiskColor = (score) => {
-    if (score >= 0.7) return '#ef4444';
-    if (score >= 0.4) return '#f59e0b';
-    return '#10b981';
-};
-
-export const getRiskLevel = (score) => {
-    if (score >= 0.7) return 'High';
-    if (score >= 0.4) return 'Medium';
-    return 'Low';
+export const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+    });
 };
 
 export const getPriorityBadgeClass = (priority) => {
     const classes = {
-        'Critical': 'badge-critical',
-        'High': 'badge-high',
-        'Medium': 'badge-medium',
-        'Low': 'badge-low'
+        'critical': 'badge-critical',
+        'high': 'badge-high',
+        'medium': 'badge-medium',
+        'low': 'badge-low'
     };
     return classes[priority] || 'badge-medium';
+};
+
+// Add this missing function
+export const getRiskColor = (score) => {
+    if (score >= 0.7) return '#dc3545';
+    if (score >= 0.4) return '#ffc107';
+    return '#28a745';
 };

@@ -1,3 +1,4 @@
+// frontend/src/components/ActionList.jsx
 import React from 'react';
 
 const ActionList = ({ actions }) => {

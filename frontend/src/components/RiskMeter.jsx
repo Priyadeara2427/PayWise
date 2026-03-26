@@ -1,9 +1,10 @@
+// frontend/src/components/RiskMeter.jsx
 import React from 'react';
 import { getRiskColor } from '../utils/formatters';
 
 const RiskMeter = ({ score }) => {
-    const percentage = (score * 100).toFixed(1);
-    const color = getRiskColor(score);
+    const percentage = ((score || 0) * 100).toFixed(1);
+    const color = getRiskColor(score || 0);
     
     return (
         <div className="risk-meter">

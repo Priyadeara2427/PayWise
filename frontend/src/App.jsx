@@ -42,6 +42,16 @@ const App = () => {
         }
     };
 
+    const loadBatchDemo = async () => {
+        try {
+            const result = await request('/demo-batch');
+            setAnalysis(result);
+            setActiveTab('results');
+        } catch (err) {
+            alert(err.message);
+        }
+    };
+
     return (
         <div className="app">
             <Navbar activeTab={activeTab} setActiveTab={setActiveTab} hasResult={!!analysis} />
@@ -57,13 +67,20 @@ const App = () => {
             </div>
             
             {activeTab !== 'dashboard' && (
-                <div style={{ position: 'fixed', bottom: '20px', right: '20px' }}>
+                <div style={{ position: 'fixed', bottom: '20px', right: '20px', display: 'flex', gap: '10px' }}>
                     <button 
                         className="btn btn-secondary" 
                         onClick={loadDemo}
                         style={{ fontSize: '0.8rem', padding: '0.5rem 1rem' }}
                     >
-                        🎯 Load Demo
+                        🎯 Load Single Demo
+                    </button>
+                    <button 
+                        className="btn btn-secondary" 
+                        onClick={loadBatchDemo}
+                        style={{ fontSize: '0.8rem', padding: '0.5rem 1rem', background: '#6c757d' }}
+                    >
+                        📊 Load Batch Demo
                     </button>
                 </div>
             )}
