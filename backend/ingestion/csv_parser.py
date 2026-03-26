@@ -14,15 +14,19 @@ from engine.counterparty_classifier import CounterpartyClassifier, CounterpartyC
 logger = logging.getLogger(__name__)
 
 class CSVParser:
-    """Enhanced CSV parser with validation, flexible column mapping, and intelligent classification"""
+    """Enhanced CSV parser with validation, flexible column mapping, intelligent classification, and partial payment extraction"""
     
     REQUIRED_COLUMNS = ['amount', 'due_date']
-    OPTIONAL_COLUMNS = ['counterparty', 'payment_date', 'type', 'description', 'invoice_no', 'gstin', 'pan']
+    OPTIONAL_COLUMNS = [
+        'counterparty', 'payment_date', 'type', 'description', 'invoice_no', 
+        'gstin', 'pan', 'accepts_partial', 'min_payment_pct', 'min_payment_amount',
+        'payment_terms', 'max_installments', 'installment_days'
+    ]
     
     @classmethod
     def parse(cls, file_path: str, column_mapping: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
-        Parse CSV file and extract obligations with intelligent classification
+        Parse CSV file and extract obligations with intelligent classification and partial payment terms
         
         Args:
             file_path: Path to CSV file
@@ -95,8 +99,137 @@ class CSVParser:
             raise ValueError(f"Missing required columns: {missing}")
     
     @classmethod
+    def _extract_partial_payment_terms(cls, row: pd.Series, amount: float) -> Dict[str, Any]:
+        """
+        Extract partial payment terms from row data
+        
+        Args:
+            row: DataFrame row
+            amount: The obligation amount
+        
+        Returns:
+            Dictionary with partial payment terms
+        """
+        # Default values
+        accepts_partial = True
+        minimum_partial_pct = 50.0
+        minimum_partial_amount = 5000.0
+        suggested_pct = 50.0
+        max_installments = 2
+        installment_days = 15
+        notes = ""
+        
+        # Check if partial payment terms are explicitly provided in columns
+        if 'accepts_partial' in row and pd.notna(row['accepts_partial']):
+            val = str(row['accepts_partial']).lower()
+            accepts_partial = val in ['true', 'yes', '1', 'y']
+        
+        if 'min_payment_pct' in row and pd.notna(row['min_payment_pct']):
+            try:
+                minimum_partial_pct = float(row['min_payment_pct'])
+            except:
+                pass
+        
+        if 'min_payment_amount' in row and pd.notna(row['min_payment_amount']):
+            try:
+                minimum_partial_amount = float(row['min_payment_amount'])
+            except:
+                pass
+        
+        # Check description for partial payment indicators
+        description = ""
+        if 'description' in row and pd.notna(row['description']):
+            description = str(row['description']).lower()
+            
+            # Look for partial payment keywords
+            if 'no partial' in description or 'full payment only' in description:
+                accepts_partial = False
+            elif 'partial accepted' in description or 'partial payment allowed' in description:
+                accepts_partial = True
+            
+            # Look for minimum percentage
+            pct_match = re.search(r'min(?:imum)?\s*(\d+)%', description)
+            if pct_match:
+                minimum_partial_pct = float(pct_match.group(1))
+            
+            # Look for minimum amount
+            amount_match = re.search(r'min(?:imum)?\s*₹?(\d+(?:,\d{3})*(?:\.\d{2})?)', description)
+            if amount_match:
+                min_amount_str = amount_match.group(1).replace(',', '')
+                minimum_partial_amount = float(min_amount_str)
+            
+            # Look for installment terms
+            install_match = re.search(r'(\d+)\s*installments?', description)
+            if install_match:
+                max_installments = int(install_match.group(1))
+            
+            days_match = re.search(r'(\d+)\s*days?', description)
+            if days_match and 'installment' in description or 'payment' in description:
+                installment_days = int(days_match.group(1))
+        
+        # Check payment_terms column if available
+        if 'payment_terms' in row and pd.notna(row['payment_terms']):
+            terms = str(row['payment_terms']).lower()
+            
+            if 'net 30' in terms or 'net 45' in terms or 'net 60' in terms:
+                # Extract net days
+                net_match = re.search(r'net\s*(\d+)', terms)
+                if net_match:
+                    installment_days = int(net_match.group(1))
+                    max_installments = 1
+            
+            if '2% 10 net 30' in terms or 'discount' in terms:
+                # Early payment discount terms
+                notes = "Early payment discount available - pay within 10 days for 2% discount"
+            
+            if 'installment' in terms:
+                install_match = re.search(r'(\d+)\s*installments?', terms)
+                if install_match:
+                    max_installments = int(install_match.group(1))
+        
+        # Adjust based on amount
+        if amount < minimum_partial_amount:
+            minimum_partial_amount = amount * 0.5
+        
+        # Calculate suggested percentage (minimum or default)
+        suggested_pct = max(minimum_partial_pct, 50.0)
+        
+        # For friends/family, suggest lower percentage
+        counterparty_type = row.get('type', '') if 'type' in row else ''
+        if counterparty_type in ['friend', 'family']:
+            suggested_pct = 30.0
+            max_installments = 4
+            installment_days = 7
+            notes = "Friends/family usually flexible - consider lower partial payment"
+        
+        # For tax/government, no partial payments
+        if counterparty_type in ['tax_authority', 'government']:
+            accepts_partial = False
+            suggested_pct = 100.0
+            minimum_partial_pct = 100.0
+            minimum_partial_amount = amount
+            notes = "Tax/government payments must be made in full"
+        
+        # For banks/loans
+        if counterparty_type == 'bank':
+            accepts_partial = False
+            suggested_pct = 100.0
+            notes = "Loan payments typically require full amount"
+        
+        return {
+            'accepts_partial': accepts_partial,
+            'minimum_partial_pct': minimum_partial_pct,
+            'minimum_partial_amount': minimum_partial_amount,
+            'suggested_pct': suggested_pct,
+            'max_installments': max_installments,
+            'installment_days': installment_days,
+            'notes': notes,
+            'history': []  # Initialize empty history
+        }
+    
+    @classmethod
     def _parse_obligations(cls, df: pd.DataFrame) -> List[Dict[str, Any]]:
-        """Parse each row into an obligation dictionary with context for classification"""
+        """Parse each row into an obligation dictionary with context for classification and partial terms"""
         obligations = []
         
         for idx, row in df.iterrows():
@@ -118,6 +251,9 @@ class CSVParser:
             
             if 'note' in row and pd.notna(row['note']):
                 context_parts.append(f"Note: {row['note']}")
+            
+            if 'payment_terms' in row and pd.notna(row['payment_terms']):
+                context_parts.append(f"Payment Terms: {row['payment_terms']}")
             
             # Add amount and date context
             amount = cls._parse_amount(row.get('amount', 0))
@@ -145,6 +281,20 @@ class CSVParser:
                 explicit_type
             )
             
+            # Extract partial payment terms
+            partial_terms = cls._extract_partial_payment_terms(row, amount)
+            
+            # Override partial terms based on classified type if not explicitly set
+            if 'accepts_partial' not in row or pd.isna(row.get('accepts_partial')):
+                if classified_type in ['tax_authority', 'government', 'bank']:
+                    partial_terms['accepts_partial'] = False
+                    partial_terms['notes'] = f"{classified_type.replace('_', ' ').title()} payments require full amount"
+                elif classified_type in ['friend', 'family']:
+                    partial_terms['accepts_partial'] = True
+                    partial_terms['suggested_pct'] = 30
+                    partial_terms['max_installments'] = 4
+                    partial_terms['notes'] = "Personal relationships allow flexible payments"
+            
             # Create obligation
             obligation = {
                 'amount': amount,
@@ -155,6 +305,7 @@ class CSVParser:
                     'classification_confidence': confidence
                 },
                 'context': context,  # Store context for reference
+                'partial_payment': partial_terms  # Add partial payment terms
             }
             
             # Add optional fields if present
@@ -171,10 +322,14 @@ class CSVParser:
             if 'gstin' in row and pd.notna(row['gstin']):
                 obligation['gstin'] = str(row['gstin'])
             
+            if 'pan' in row and pd.notna(row['pan']):
+                obligation['pan'] = str(row['pan'])
+            
             obligations.append(obligation)
             
             # Log classification for debugging
             logger.debug(f"Classified '{counterparty_name}' as {classified_type} (confidence: {confidence:.2f})")
+            logger.debug(f"Partial terms for {counterparty_name}: accepts={partial_terms['accepts_partial']}, min_pct={partial_terms['minimum_partial_pct']}%")
         
         return obligations
     
@@ -204,7 +359,16 @@ class CSVParser:
                 'tax': 'tax_authority',
                 'gst': 'tax_authority',
                 'government': 'government',
-                'govt': 'government'
+                'govt': 'government',
+                'friend': 'friend',
+                'family': 'family',
+                'bank': 'bank',
+                'utility': 'utility',
+                'rent': 'rent',
+                'insurance': 'insurance',
+                'investment': 'investment',
+                'charity': 'charity',
+                'employee': 'employee'
             }
             
             if explicit_type in type_mapping:
@@ -362,7 +526,11 @@ class CSVParser:
             'payment_date': ['payment_date', 'paymentdate', 'paid_date', 'payment date'],
             'type': ['type', 'transaction_type', 'txn_type', 'category'],
             'description': ['description', 'desc', 'notes', 'remarks', 'particulars'],
-            'invoice_no': ['invoice_no', 'invoiceno', 'invoice number', 'inv_no']
+            'invoice_no': ['invoice_no', 'invoiceno', 'invoice number', 'inv_no'],
+            'accepts_partial': ['accepts_partial', 'partial_allowed', 'allow_partial', 'partial_payment'],
+            'min_payment_pct': ['min_payment_pct', 'min_percent', 'minimum_percent', 'partial_percent'],
+            'min_payment_amount': ['min_payment_amount', 'min_amount', 'minimum_amount', 'partial_min'],
+            'payment_terms': ['payment_terms', 'terms', 'payment_conditions']
         }
         
         for standard_field, possible_names in variations.items():

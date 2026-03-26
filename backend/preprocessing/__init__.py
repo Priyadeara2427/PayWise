@@ -1,3 +1,4 @@
+# backend/preprocessing/__init__.py
 """
 Preprocessing module for financial data processing
 """
@@ -13,7 +14,15 @@ from .financial_processor import (
     remove_duplicates,
     categorize,
     aggregate_by_category,
-    get_payment_priorities
+    get_payment_priorities,
+    create_cash_flow_dataframe,
+    create_cash_flow_graph,
+    create_cash_flow_analysis,
+    print_cash_flow_table,  # Add this
+    filter_by_partial_availability,
+    get_partial_payment_options,
+    get_partial_payment_summary,
+    print_partial_payment_summary
 )
 
 __all__ = [
@@ -27,5 +36,13 @@ __all__ = [
     'remove_duplicates',
     'categorize',
     'aggregate_by_category',
-    'get_payment_priorities'
+    'get_payment_priorities',
+    'create_cash_flow_dataframe',
+    'create_cash_flow_graph',
+    'create_cash_flow_analysis',
+    'print_cash_flow_table',
+    'filter_by_partial_availability',
+    'get_partial_payment_options',
+    'get_partial_payment_summary',
+    'print_partial_payment_summary'
 ]

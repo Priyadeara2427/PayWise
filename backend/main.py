@@ -15,6 +15,7 @@ from backend.engine.decision_engine import run_decision_engine, DecisionEngine
 from backend.engine.financial_state import compute_days_to_zero, detect_shortfall
 from backend.engine.llm_actions import generate_chain_of_thought, generate_negotiation_email
 from backend.engine.normalizer import DataNormalizer
+from backend.engine.communication_engine import CommunicationEngine, create_action_communications
 from backend.ingestion.csv_parser import CSVParser
 from backend.ingestion.ocr_parser import OCRParser
 from backend.ingestion.pdf_parser import PDFParser
@@ -31,8 +32,8 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="Fintech Decision Assistant API",
-    description="API for processing financial documents and making payment decisions with intelligent classification",
-    version="3.0.0",
+    description="API for processing financial documents and making payment decisions with intelligent classification and context-aware communications",
+    version="4.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -49,7 +50,11 @@ app.add_middleware(
 # Initialize components
 normalizer = DataNormalizer()
 decision_engine = DecisionEngine()
-pipeline = IngestionPipeline(enable_decisions=True)  # Enable decision generation
+pipeline = IngestionPipeline(enable_decisions=True)
+
+# Initialize communication engine with API key from environment
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', None)
+communication_engine = CommunicationEngine(api_key=OPENROUTER_API_KEY)
 
 # Request/Response Models
 class AnalyzeRequest(BaseModel):
@@ -60,6 +65,12 @@ class AnalyzeRequest(BaseModel):
 class EmailRequest(BaseModel):
     obligation: Dict[str, Any]
     decision: Dict[str, Any]
+
+class CommunicationRequest(BaseModel):
+    cash_balance: float
+    payables: List[Dict[str, Any]]
+    receivables: List[Dict[str, Any]]
+    decisions: List[Dict[str, Any]]
 
 class UploadResponse(BaseModel):
     success: bool
@@ -76,8 +87,8 @@ async def root():
     """Root endpoint with API information"""
     return {
         "name": "Fintech Decision Assistant API",
-        "version": "3.0.0",
-        "description": "Intelligent financial document processing with counterparty classification",
+        "version": "4.0.0",
+        "description": "Intelligent financial document processing with counterparty classification and context-aware communications",
         "features": [
             "Automatic counterparty classification (vendor, customer, tax authority, government, etc.)",
             "OCR for images and scanned documents",
@@ -85,13 +96,16 @@ async def root():
             "CSV/Excel file processing",
             "Intelligent decision making",
             "Email drafting for negotiations",
-            "Risk scoring and penalty calculation"
+            "Risk scoring and penalty calculation",
+            "Context-aware communication generation",
+            "Emergency action planning"
         ],
         "endpoints": {
             "/upload": "Upload and parse financial documents",
             "/upload-batch": "Upload multiple documents",
             "/analyze": "Analyze financial state and get decisions",
             "/draft-email": "Generate negotiation email",
+            "/generate-communications": "Generate all communications based on decisions",
             "/health": "Health check",
             "/classify": "Classify counterparty type",
             "/stats": "Get processing statistics"
@@ -109,9 +123,10 @@ async def health_check():
             "pdf_parser": "available",
             "csv_parser": "available",
             "decision_engine": "available",
-            "classifier": "available"
+            "classifier": "available",
+            "communication_engine": "available" if OPENROUTER_API_KEY else "template_mode"
         },
-        "version": "3.0.0"
+        "version": "4.0.0"
     }
 
 @app.post("/upload", response_model=UploadResponse)
@@ -132,6 +147,7 @@ async def upload_file(
         Normalized obligations, financial state, and decisions
     """
     temp_file = None
+    temp_path = None
     
     try:
         # Read file contents
@@ -243,8 +259,11 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
     finally:
         # Clean up temp file
-        if temp_file and os.path.exists(temp_file):
-            os.unlink(temp_file)
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
 
 @app.post("/upload-batch")
 async def upload_batch(
@@ -263,6 +282,7 @@ async def upload_batch(
         processing_results = []
         
         for file in files:
+            temp_path = None
             try:
                 contents = await file.read()
                 ext = file.filename.split(".")[-1].lower()
@@ -305,7 +325,7 @@ async def upload_batch(
                     })
                     
                 finally:
-                    if os.path.exists(temp_path):
+                    if temp_path and os.path.exists(temp_path):
                         os.unlink(temp_path)
                     
             except Exception as e:
@@ -422,6 +442,93 @@ async def analyze(state: Dict[str, Any]):
         logger.error(f"Error in analysis: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error analyzing financial state: {str(e)}")
 
+@app.post("/generate-communications")
+async def generate_communications(request: CommunicationRequest):
+    """
+    Generate context-aware communications based on decisions
+    
+    Args:
+        request: Contains cash_balance, payables, receivables, and decisions
+    
+    Returns:
+        Generated emails and messages for all parties
+    """
+    try:
+        communications = create_action_communications(
+            cash_balance=request.cash_balance,
+            payables=request.payables,
+            receivables=request.receivables,
+            decisions=request.decisions,
+            api_key=OPENROUTER_API_KEY
+        )
+        
+        return JSONResponse(content={
+            "success": True,
+            "communications": communications,
+            "summary": {
+                "total_communications": communications["summary"]["total_communications"],
+                "payable_communications": len(communications["payables"]),
+                "receivable_communications": len(communications["receivables"])
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error generating communications: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error generating communications: {str(e)}")
+
+@app.post("/draft-email")
+async def draft_email(payload: EmailRequest):
+    """
+    Generate negotiation email for an obligation (legacy endpoint)
+    
+    Args:
+        payload: Obligation and decision details
+    
+    Returns:
+        Generated email
+    """
+    try:
+        # Use the communication engine for better context-aware generation
+        profile = communication_engine.get_relationship_profile(
+            payload.obligation.get("counterparty", {}).get("type", "unknown")
+        )
+        
+        if payload.decision.get("action") == "negotiate_deadline_extension":
+            email = communication_engine.generate_payment_extension_request(
+                payload.obligation, 
+                profile,
+                payload.decision.get("suggested_terms", {}).get("requested_days", 15)
+            )
+        elif payload.decision.get("action") == "pay_partially":
+            email = communication_engine.generate_partial_payment_proposal(
+                payload.obligation,
+                profile,
+                payload.decision.get("suggested_terms", {}).get("percentage", 50),
+                {"installments": 2, "days": 15}
+            )
+        else:
+            # Fallback to legacy generation
+            email = generate_negotiation_email(payload.obligation, payload.decision)
+        
+        # Add metadata
+        response = {
+            "success": True,
+            "email": email,
+            "metadata": {
+                "counterparty": payload.obligation.get("counterparty", {}).get("name", "Unknown"),
+                "counterparty_type": payload.obligation.get("counterparty", {}).get("type", "unknown"),
+                "action": payload.decision.get("action", "unknown"),
+                "priority": payload.decision.get("priority", "unknown"),
+                "generated_at": datetime.now().isoformat()
+            }
+        }
+        
+        return JSONResponse(content=response)
+        
+    except Exception as e:
+        logger.error(f"Error generating email: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error generating email: {str(e)}")
+
 @app.post("/classify")
 async def classify_counterparty(name: str, context: Optional[str] = None):
     """
@@ -451,33 +558,38 @@ async def classify_counterparty(name: str, context: Optional[str] = None):
         logger.error(f"Error classifying counterparty: {e}")
         raise HTTPException(status_code=500, detail=f"Error classifying: {str(e)}")
 
-@app.post("/draft-email")
-async def draft_email(payload: EmailRequest):
+@app.post("/emergency-plan")
+async def emergency_plan(
+    cash_balance: float,
+    critical_obligations: List[Dict[str, Any]],
+    shortfall: float
+):
     """
-    Generate negotiation email for an obligation
+    Generate emergency action plan for critical shortfall
+    
+    Args:
+        cash_balance: Current cash balance
+        critical_obligations: List of critical unpaid obligations
+        shortfall: Amount of cash shortfall
+    
+    Returns:
+        Emergency action plan with communications
     """
     try:
-        # Generate email
-        email = generate_negotiation_email(payload.obligation, payload.decision)
+        plan = communication_engine.generate_emergency_action_plan(
+            critical_obligations,
+            shortfall,
+            ["borrow", "partial_payments", "negotiate"]
+        )
         
-        # Add metadata
-        response = {
+        return JSONResponse(content={
             "success": True,
-            "email": email,
-            "metadata": {
-                "counterparty": payload.obligation.get("counterparty", {}).get("name", "Unknown"),
-                "counterparty_type": payload.obligation.get("counterparty", {}).get("type", "unknown"),
-                "action": payload.decision.get("action", "unknown"),
-                "priority": payload.decision.get("priority", "unknown"),
-                "generated_at": datetime.now().isoformat()
-            }
-        }
-        
-        return JSONResponse(content=response)
+            "emergency_plan": plan
+        })
         
     except Exception as e:
-        logger.error(f"Error generating email: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error generating email: {str(e)}")
+        logger.error(f"Error generating emergency plan: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error generating emergency plan: {str(e)}")
 
 @app.get("/stats")
 async def get_stats():
@@ -487,20 +599,23 @@ async def get_stats():
     return {
         "success": True,
         "stats": {
-            "version": "3.0.0",
+            "version": "4.0.0",
             "features": [
                 "counterparty_classification",
                 "ocr_support",
                 "pdf_parsing",
                 "decision_engine",
-                "email_generation"
+                "email_generation",
+                "context_aware_communications",
+                "emergency_planning"
             ],
             "supported_formats": [".csv", ".xlsx", ".pdf", ".jpg", ".jpeg", ".png"],
             "classification_types": [
                 "vendor", "customer", "tax_authority", "government",
                 "employee", "friend", "family", "bank", "utility",
                 "rent", "insurance", "investment", "charity"
-            ]
+            ],
+            "communication_modes": "ai_generated" if OPENROUTER_API_KEY else "template_based"
         }
     }
 

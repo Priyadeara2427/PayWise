@@ -15,12 +15,12 @@ from engine.counterparty_classifier import CounterpartyClassifier, CounterpartyC
 logger = logging.getLogger(__name__)
 
 class PDFParser:
-    """Enhanced PDF parser with multiple extraction methods and intelligent classification"""
+    """Enhanced PDF parser with multiple extraction methods, intelligent classification, and partial payment extraction"""
     
     @classmethod
     def parse(cls, file_path: str, use_pdfplumber: bool = True) -> Dict[str, Any]:
         """
-        Parse PDF and extract structured data with intelligent classification
+        Parse PDF and extract structured data with intelligent classification and partial payment terms
         
         Args:
             file_path: Path to PDF file
@@ -37,6 +37,7 @@ class PDFParser:
                 'obligations': [],
                 'gst_numbers': [],
                 'pan_numbers': [],
+                'partial_payment_info': {},
                 'source_type': 'pdf'
             }
             
@@ -53,11 +54,15 @@ class PDFParser:
             extracted_data['gst_numbers'] = cls._extract_gst_numbers(text)
             extracted_data['pan_numbers'] = cls._extract_pan_numbers(text)
             
-            # Parse text to extract obligations with classification
+            # Extract partial payment information
+            extracted_data['partial_payment_info'] = cls._extract_partial_payment_info(text)
+            
+            # Parse text to extract obligations with classification and partial terms
             obligations = cls._parse_text_to_obligations(
                 text, 
                 extracted_data['gst_numbers'],
-                extracted_data['pan_numbers']
+                extracted_data['pan_numbers'],
+                extracted_data['partial_payment_info']
             )
             extracted_data['obligations'] = obligations
             extracted_data['record_count'] = len(obligations)
@@ -71,6 +76,100 @@ class PDFParser:
         except Exception as e:
             logger.error(f"Failed to parse PDF {file_path}: {e}")
             raise
+    
+    @classmethod
+    def _extract_partial_payment_info(cls, text: str) -> Dict[str, Any]:
+        """Extract partial payment related information from PDF text"""
+        text_lower = text.lower()
+        
+        info = {
+            'accepts_partial': True,
+            'minimum_pct': 50.0,
+            'minimum_amount': 5000.0,
+            'max_installments': 1,
+            'installment_days': 15,
+            'has_terms': False,
+            'terms_text': ''
+        }
+        
+        # Check for partial payment indicators
+        if 'no partial' in text_lower or 'full payment only' in text_lower:
+            info['accepts_partial'] = False
+        elif 'partial accepted' in text_lower or 'partial payment allowed' in text_lower:
+            info['accepts_partial'] = True
+        
+        # Look for percentage requirements
+        pct_patterns = [
+            r'min(?:imum)?\s*(\d+)%',
+            r'at least\s*(\d+)%',
+            r'(\d+)%\s*minimum',
+            r'pay\s*(\d+)%\s*now',
+            r'(\d+)%\s*deposit'
+        ]
+        
+        for pattern in pct_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                info['minimum_pct'] = float(match.group(1))
+                info['has_terms'] = True
+                break
+        
+        # Look for minimum amount requirements
+        amount_patterns = [
+            r'min(?:imum)?\s*₹?(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            r'minimum amount\s*₹?(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            r'at least\s*₹?(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            r'minimum\s*payment\s*₹?(\d+(?:,\d{3})*(?:\.\d{2})?)'
+        ]
+        
+        for pattern in amount_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                amount_str = match.group(1).replace(',', '')
+                info['minimum_amount'] = float(amount_str)
+                info['has_terms'] = True
+                break
+        
+        # Look for installment information
+        install_patterns = [
+            r'(\d+)\s*installments?',
+            r'pay in (\d+)\s*parts?',
+            r'(\d+)\s*equal\s*payments?',
+            r'(\d+)\s*monthly\s*payments?'
+        ]
+        
+        for pattern in install_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                info['max_installments'] = int(match.group(1))
+                info['has_terms'] = True
+                break
+        
+        # Look for payment terms like "Net 30", "Net 45"
+        net_match = re.search(r'net\s*(\d+)', text_lower)
+        if net_match:
+            info['installment_days'] = int(net_match.group(1))
+            info['has_terms'] = True
+        
+        # Look for discount terms
+        discount_match = re.search(r'(\d+)%\s*discount\s*if\s*paid\s*within\s*(\d+)\s*days', text_lower)
+        if discount_match:
+            info['discount_pct'] = float(discount_match.group(1))
+            info['discount_days'] = int(discount_match.group(2))
+            info['has_terms'] = True
+        
+        # Store the terms text for reference
+        terms_sentences = []
+        term_keywords = ['terms', 'payment terms', 'partial', 'installment', 'net', 'due', 'discount']
+        sentences = re.split(r'[.!?\n]', text)
+        for sentence in sentences:
+            if any(keyword in sentence.lower() for keyword in term_keywords):
+                terms_sentences.append(sentence.strip())
+        
+        if terms_sentences:
+            info['terms_text'] = ' '.join(terms_sentences[:5])
+        
+        return info
     
     @staticmethod
     def _extract_with_pymupdf(file_path: str) -> str:
@@ -132,9 +231,58 @@ class PDFParser:
         return text, tables
     
     @classmethod
+    def _get_partial_terms_for_type(cls, counterparty_type: str, amount: float, 
+                                     pdf_terms: Dict) -> Dict[str, Any]:
+        """Get partial payment terms based on counterparty type and PDF extraction"""
+        
+        # Default terms by type
+        type_defaults = {
+            'vendor': {'accepts_partial': True, 'min_pct': 50, 'min_amount': 5000, 'max_inst': 2, 'days': 15},
+            'customer': {'accepts_partial': True, 'min_pct': 30, 'min_amount': 1000, 'max_inst': 3, 'days': 10},
+            'tax_authority': {'accepts_partial': False, 'min_pct': 100, 'min_amount': amount, 'max_inst': 1, 'days': 0},
+            'government': {'accepts_partial': False, 'min_pct': 100, 'min_amount': amount, 'max_inst': 1, 'days': 0},
+            'bank': {'accepts_partial': False, 'min_pct': 100, 'min_amount': amount, 'max_inst': 1, 'days': 0},
+            'employee': {'accepts_partial': False, 'min_pct': 100, 'min_amount': amount, 'max_inst': 1, 'days': 0},
+            'utility': {'accepts_partial': True, 'min_pct': 70, 'min_amount': 500, 'max_inst': 2, 'days': 7},
+            'rent': {'accepts_partial': True, 'min_pct': 60, 'min_amount': 5000, 'max_inst': 2, 'days': 15},
+            'friend': {'accepts_partial': True, 'min_pct': 20, 'min_amount': 1000, 'max_inst': 4, 'days': 7},
+            'family': {'accepts_partial': True, 'min_pct': 10, 'min_amount': 500, 'max_inst': 6, 'days': 7},
+            'insurance': {'accepts_partial': False, 'min_pct': 100, 'min_amount': amount, 'max_inst': 1, 'days': 0},
+            'investment': {'accepts_partial': True, 'min_pct': 50, 'min_amount': 5000, 'max_inst': 3, 'days': 15},
+            'charity': {'accepts_partial': True, 'min_pct': 25, 'min_amount': 1000, 'max_inst': 4, 'days': 30},
+            'unknown': {'accepts_partial': True, 'min_pct': 50, 'min_amount': 5000, 'max_inst': 2, 'days': 15}
+        }
+        
+        defaults = type_defaults.get(counterparty_type, type_defaults['unknown'])
+        
+        # Override with PDF-extracted terms if present
+        accepts_partial = defaults['accepts_partial']
+        if pdf_terms.get('has_terms'):
+            accepts_partial = pdf_terms.get('accepts_partial', accepts_partial)
+        
+        min_pct = pdf_terms.get('minimum_pct', defaults['min_pct'])
+        min_amount = pdf_terms.get('minimum_amount', defaults['min_amount'])
+        
+        # Adjust minimum amount if it's higher than the obligation amount
+        if min_amount > amount:
+            min_amount = amount * (min_pct / 100)
+        
+        return {
+            'accepts_partial': accepts_partial,
+            'minimum_partial_pct': min_pct,
+            'minimum_partial_amount': min_amount,
+            'suggested_pct': min(max(min_pct, 30), 70),
+            'max_installments': pdf_terms.get('max_installments', defaults['max_inst']),
+            'installment_days': pdf_terms.get('installment_days', defaults['days']),
+            'notes': pdf_terms.get('terms_text', defaults.get('notes', '')),
+            'history': []
+        }
+    
+    @classmethod
     def _parse_text_to_obligations(cls, text: str, gst_numbers: List = None, 
-                                   pan_numbers: List = None) -> List[Dict[str, Any]]:
-        """Parse text to extract obligation information with intelligent classification"""
+                                   pan_numbers: List = None, 
+                                   pdf_terms: Dict = None) -> List[Dict[str, Any]]:
+        """Parse text to extract obligation information with intelligent classification and partial terms"""
         obligations = []
         lines = text.split('\n')
         
@@ -188,14 +336,30 @@ class PDFParser:
                         # Determine if payable or receivable
                         txn_type = cls._determine_transaction_type(line_stripped, context)
                         
+                        # Classify counterparty type
+                        classified_type, confidence = cls._classify_counterparty(
+                            counterparty_name,
+                            context,
+                            gst_numbers,
+                            pan_numbers,
+                            txn_type
+                        )
+                        
+                        # Get partial payment terms
+                        partial_terms = cls._get_partial_terms_for_type(
+                            classified_type, amount, pdf_terms or {}
+                        )
+                        
                         # Build obligation
                         obligation = {
                             'amount': amount,
                             'due_date': due_date,
                             'counterparty': {
                                 'name': counterparty_name,
-                                'type': 'unknown'  # Will be classified
+                                'type': classified_type,
+                                'classification_confidence': confidence
                             },
+                            'partial_payment': partial_terms,
                             'source_line': line_stripped,
                             'line_number': i + 1,
                             'context': context,
@@ -208,17 +372,10 @@ class PDFParser:
                             if invoice_match:
                                 obligation['invoice_number'] = invoice_match.group(1)
                         
-                        # Classify counterparty type
-                        classified_type, confidence = cls._classify_counterparty(
-                            counterparty_name,
-                            context,
-                            gst_numbers,
-                            pan_numbers,
-                            txn_type
-                        )
-                        
-                        obligation['counterparty']['type'] = classified_type
-                        obligation['counterparty']['classification_confidence'] = confidence
+                        # Extract payment terms from line
+                        payment_terms_match = re.search(r'payment\s*terms?[:\s]+([^.\n]+)', line_stripped, re.IGNORECASE)
+                        if payment_terms_match:
+                            obligation['payment_terms'] = payment_terms_match.group(1).strip()
                         
                         obligations.append(obligation)
                         
@@ -356,7 +513,6 @@ class PDFParser:
     @staticmethod
     def _extract_gst_numbers(text: str) -> List[Dict[str, Any]]:
         """Extract GST numbers from text"""
-        # GSTIN pattern: 15 characters
         gst_pattern = r'\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}\d{1}[A-Z]{1}[Z]{1}[A-Z\d]{1}\b'
         
         gst_numbers = []
@@ -374,7 +530,6 @@ class PDFParser:
     @staticmethod
     def _extract_pan_numbers(text: str) -> List[Dict[str, Any]]:
         """Extract PAN numbers from text"""
-        # PAN pattern: 5 letters, 4 digits, 1 letter
         pan_pattern = r'\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b'
         
         pan_numbers = []
