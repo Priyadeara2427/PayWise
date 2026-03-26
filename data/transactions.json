@@ -231,5 +231,52 @@
     "minimum_partial_pct": 40,
     "analyzed_at": "2026-03-26T02:27:37.630937",
     "created_at": "2026-03-26T02:27:37.631904"
+  },
+  {
+    "id": "2437cd2d",
+    "counterparty_name": "BankA",
+    "counterparty_type": "bank",
+    "amount": 15000.0,
+    "transaction_type": "payable",
+    "status": "pending",
+    "due_date": "2026-03-28",
+    "payment_date": null,
+    "days_late": 0,
+    "priority": "medium",
+    "risk_score": 0.5,
+    "risk_factors": [],
+    "penalty_analysis": {
+      "total_penalty": 0.0,
+      "penalty_breakdown": [
+        {
+          "type": "Late Payment Penalty",
+          "calculation": "0.5% per day \u00d7 0 days",
+          "amount": 0.0
+        }
+      ],
+      "penalty_as_pct_of_amount": 0.0,
+      "total_effective_cost": 15000.0
+    },
+    "recommended_actions": [],
+    "assumptions_made": [
+      "Payment date not provided. Assuming not yet paid."
+    ],
+    "accepts_partial": true,
+    "minimum_partial_pct": 40,
+    "analyzed_at": "2026-03-26T06:06:10.675092",
+    "payment_category": "must_pay",
+    "can_negotiate": false,
+    "can_delay": false,
+    "can_partial": false,
+    "grace_days": 3,
+    "penalty_rate": 0.24,
+    "payment_action": "PREPARE_FOR_PAYMENT",
+    "recommendation": "\ud83d\udd14 Due in 2 days. Bank loan - affects credit score, minimal grace period. Prepare \u20b915,000.00.",
+    "risks": [
+      "Credit score reduction",
+      "Late payment fees"
+    ],
+    "message_template": "Payment of \u20b915,000.00 is coming up on the due date. I'll process it on time.",
+    "created_at": "2026-03-26T06:06:10.677195"
   }
 ]

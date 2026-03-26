@@ -1,6 +1,6 @@
 """
 PayWise - Fintech Decision Assistant
-Complete Flask application with data preprocessing and duplicate removal
+Complete Flask application with payment strategy, data preprocessing, and all backend integrations
 """
 
 import os
@@ -22,15 +22,18 @@ from backend.engine.decision_engine import DecisionEngine
 from backend.engine.normalizer import DataNormalizer
 from backend.engine.communication_engine import CommunicationEngine
 from backend.engine.counterparty_classifier import CounterpartyClassifier
+from backend.engine.risk_engine import calculate_risk
+from backend.engine.predictive_decision_engine import PredictiveDecisionEngine
+from backend.engine.payment_strategy_analyzer import PaymentStrategyAnalyzer
 
 from backend.ingestion.csv_parser import CSVParser
 from backend.ingestion.pdf_parser import PDFParser
 from backend.ingestion.ocr_parser import OCRParser
 from backend.ingestion.pipeline import IngestionPipeline
 
-from backend.models.obligation import Obligation, FinancialState, PartialPaymentTerms
+from backend.models.obligation import Obligation, FinancialState, PartialPaymentTerms, TransactionType
 from backend.preprocessing.financial_processor import (
-    process_ingested_data,
+    process_ingested_data, 
     get_partial_payment_summary,
     create_cash_flow_analysis,
     print_financial_summary,
@@ -38,19 +41,7 @@ from backend.preprocessing.financial_processor import (
     aggregate_by_category,
     get_payment_priorities
 )
-from pydantic import BaseModel
-from typing import Optional, List, Any, Dict
 
-# Add this model definition
-class ChatRequest(BaseModel):
-    messages: List[Dict[str, str]]
-    transaction: Optional[Dict[str, Any]] = None
-    prompt: Optional[str] = None
-    festivalContext: Optional[List[Dict[str, Any]]] = None
-
-# If you also need a response model
-class ChatResponse(BaseModel):
-    reply: str
 load_dotenv()
 
 # Configure logging
@@ -74,6 +65,8 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 # File paths
 TRANSACTIONS_FILE = DATA_DIR / 'transactions.json'
+OBLIGATIONS_FILE = DATA_DIR / 'obligations.json'
+FINANCIAL_STATE_FILE = OUTPUT_DIR / 'financial_state.json'
 PROCESSED_DATA_FILE = OUTPUT_DIR / 'processed_financial_state.json'
 CASH_BALANCE_FILE = DATA_DIR / 'cash_balance.json'
 
@@ -89,8 +82,11 @@ def init_data_files():
         with open(TRANSACTIONS_FILE, 'w') as f:
             json.dump([], f)
     
+    if not OBLIGATIONS_FILE.exists():
+        with open(OBLIGATIONS_FILE, 'w') as f:
+            json.dump([], f)
+    
     if not CASH_BALANCE_FILE.exists():
-        # Initialize with default cash balance of ₹1,00,000
         with open(CASH_BALANCE_FILE, 'w') as f:
             json.dump({"cash_balance": 100000}, f)
 
@@ -100,6 +96,7 @@ init_data_files()
 decision_engine = DecisionEngine()
 normalizer = DataNormalizer()
 communication_engine = CommunicationEngine(api_key=os.getenv('OPENROUTER_API_KEY'))
+pipeline = IngestionPipeline(enable_decisions=True)
 
 # ------------------------------
 # Cash Balance Functions
@@ -156,6 +153,19 @@ def get_transactions(limit=100):
     except (FileNotFoundError, json.JSONDecodeError):
         return []
 
+def save_financial_state(state):
+    """Save financial state to file"""
+    with open(FINANCIAL_STATE_FILE, 'w') as f:
+        json.dump(state, f, indent=2, default=str)
+
+def load_financial_state():
+    """Load financial state from file"""
+    try:
+        with open(FINANCIAL_STATE_FILE, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
 def process_all_transactions():
     """Process all transactions using financial_processor and save to processed file"""
     transactions = get_transactions(limit=1000)
@@ -192,7 +202,13 @@ def process_all_transactions():
                             },
                             "note": t.get("note", ""),
                             "invoice_number": t.get("invoice_number"),
-                            "transaction_id": t.get("id")
+                            "transaction_id": t.get("id"),
+                            "payment_category": t.get("payment_category"),
+                            "can_negotiate": t.get("can_negotiate", False),
+                            "can_delay": t.get("can_delay", False),
+                            "can_partial": t.get("can_partial", False),
+                            "grace_days": t.get("grace_days", 0),
+                            "message_template": t.get("message_template", "")
                         }
                         for t in transactions
                     ]
@@ -214,20 +230,22 @@ def process_all_transactions():
     return processed
 
 # ------------------------------
-# Analysis Functions
+# Analysis Functions with Payment Strategy
 # ------------------------------
 
 def analyze_transaction(data):
-    """Analyze a single transaction using backend logic"""
+    """Analyze a single transaction using backend logic with payment strategy"""
     try:
         # Calculate days late
         days_late = 0
         due_date = data.get('due_date')
+        due_date_obj = None
+        
         if due_date:
             try:
-                due = datetime.strptime(due_date, '%Y-%m-%d').date()
+                due_date_obj = datetime.strptime(due_date, '%Y-%m-%d').date()
                 today = datetime.today().date()
-                days_late = max(0, (today - due).days)
+                days_late = max(0, (today - due_date_obj).days)
             except:
                 days_late = 0
         
@@ -253,56 +271,62 @@ def analyze_transaction(data):
         
         # Determine priority
         if risk_score >= 0.7:
-            priority = "High"
+            priority = "critical"
         elif risk_score >= 0.4:
-            priority = "Medium"
+            priority = "medium"
         else:
-            priority = "Low"
+            priority = "low"
         
         # Calculate penalty
         penalty_rate = 0.005
         penalty = amount * penalty_rate * days_late
         penalty = min(penalty, amount * 0.2)
         
-        # Generate recommendations
+        # Get payment strategy analysis
+        if due_date_obj:
+            payment_strategy = PaymentStrategyAnalyzer.analyze_payment(
+                counterparty_type, amount, due_date_obj, days_late
+            )
+        else:
+            payment_strategy = PaymentStrategyAnalyzer.analyze_payment(
+                counterparty_type, amount, datetime.today().date(), days_late
+            )
+        
+        # Generate recommendations based on payment strategy
         recommendations = []
-        if counterparty_type in ['tax_authority', 'government'] and days_late > 0:
+        
+        if payment_strategy.get('payment_action') == 'PAY_IMMEDIATELY':
             recommendations.append({
-                "action": "Pay Immediately - Legal Risk",
-                "rationale": f"Tax/government payment {days_late} days overdue. Legal penalties may apply.",
+                "action": "Pay Immediately",
+                "rationale": payment_strategy.get('recommendation', 'Critical payment - pay now'),
                 "urgency": "critical"
             })
-        
-        if risk_score >= 0.7:
+        elif payment_strategy.get('payment_action') == 'NEGOTIATE_EXTENSION':
             recommendations.append({
-                "action": "Prioritize This Payment",
-                "rationale": f"High risk score ({risk_score:.2f}) - immediate attention required",
-                "urgency": "high"
+                "action": "Request Payment Extension",
+                "rationale": payment_strategy.get('recommendation', 'Can negotiate extension'),
+                "urgency": "medium"
             })
-        elif risk_score >= 0.4:
-            if data.get('accepts_partial', True):
-                recommendations.append({
-                    "action": f"Propose Partial Payment ({data.get('minimum_partial_pct', 40)}% Now)",
-                    "rationale": f"Offer {data.get('minimum_partial_pct', 40)}% now, balance in 15 days",
-                    "urgency": "medium"
-                })
-            else:
-                recommendations.append({
-                    "action": "Request Payment Extension",
-                    "rationale": "Request 7-10 day extension",
-                    "urgency": "medium"
-                })
-        else:
+        elif payment_strategy.get('payment_action') == 'COMMUNICATE_AND_DELAY':
             recommendations.append({
-                "action": "Pay on Schedule",
-                "rationale": "Low risk - maintain good payment history",
+                "action": "Communicate and Delay",
+                "rationale": payment_strategy.get('recommendation', 'Flexible - communicate first'),
                 "urgency": "low"
             })
         
-        if penalty > 0:
+        # Add partial payment recommendation if applicable
+        if payment_strategy.get('can_partial') and data.get('accepts_partial', True):
+            min_pct = data.get('minimum_partial_pct', 40)
+            recommendations.append({
+                "action": f"Propose Partial Payment ({min_pct}% Now)",
+                "rationale": f"Offer {min_pct}% now, balance in 15 days",
+                "urgency": "medium"
+            })
+        
+        if penalty > 0 and payment_strategy.get('can_negotiate', False):
             recommendations.append({
                 "action": f"Avoid ₹{penalty:,.0f} Penalty",
-                "rationale": f"Pay within {max(0, 30 - days_late)} days to avoid penalty",
+                "rationale": f"Pay within {max(0, 30 - days_late)} days or negotiate extension",
                 "urgency": "medium" if days_late > 0 else "low"
             })
         
@@ -340,7 +364,19 @@ def analyze_transaction(data):
             "assumptions_made": assumptions,
             "accepts_partial": data.get('accepts_partial', True),
             "minimum_partial_pct": data.get('minimum_partial_pct', 40),
-            "analyzed_at": datetime.now().isoformat()
+            "analyzed_at": datetime.now().isoformat(),
+            
+            # Payment Strategy Fields
+            "payment_category": payment_strategy.get('category'),
+            "can_negotiate": payment_strategy.get('can_negotiate', False),
+            "can_delay": payment_strategy.get('can_delay', False),
+            "can_partial": payment_strategy.get('can_partial', False),
+            "grace_days": payment_strategy.get('grace_days', 0),
+            "penalty_rate": payment_strategy.get('penalty_rate', 0),
+            "payment_action": payment_strategy.get('payment_action'),
+            "recommendation": payment_strategy.get('recommendation'),
+            "risks": payment_strategy.get('risks', []),
+            "message_template": payment_strategy.get('message_template', '')
         }
         
         # Save to file
@@ -354,95 +390,64 @@ def analyze_transaction(data):
         traceback.print_exc()
         raise
 
-
 def calculate_dashboard_stats():
-    """Calculate comprehensive dashboard statistics from processed data"""
-    try:
-        # Load processed data
-        if PROCESSED_DATA_FILE.exists():
-            with open(PROCESSED_DATA_FILE, 'r') as f:
-                processed = json.load(f)
-        else:
-            processed = process_all_transactions()
-        
-        if not processed:
-            return {
-                "total_transactions": 0,
-                "total_amount": 0,
-                "high_risk_count": 0,
-                "medium_risk_count": 0,
-                "low_risk_count": 0,
-                "overdue_count": 0,
-                "pending_count": 0,
-                "paid_count": 0,
-                "payables_count": 0,
-                "receivables_count": 0,
-                "accepts_partial_count": 0,
-                "total_payables_amount": 0,
-                "total_receivables_amount": 0,
-                "total_penalties": 0,
-                "avg_risk_score": 0,
-                "cash_balance": get_cash_balance()
-            }
-        
-        payables = processed.get('payables', [])
-        
-        # Calculate statistics from processed data
-        total_transactions = processed['summary']['total_obligations']
-        total_amount = processed['summary']['total_payables'] + processed['summary']['total_receivables']
-        
-        # Risk distribution
-        high_risk = sum(1 for p in payables if p.get('risk_score', 0) >= 0.7)
-        medium_risk = sum(1 for p in payables if 0.4 <= p.get('risk_score', 0) < 0.7)
-        low_risk = sum(1 for p in payables if p.get('risk_score', 0) < 0.4)
-        
-        # Status distribution
-        overdue = sum(1 for p in payables if p.get('days_late', 0) > 0)
-        pending = sum(1 for p in payables if p.get('days_late', 0) == 0)
-        
-        # Partial payment stats
-        accepts_partial = sum(1 for p in payables if p.get('partial_payment', {}).get('accepts_partial', False))
-        
-        return {
-            "total_transactions": total_transactions,
-            "total_amount": total_amount,
-            "high_risk_count": high_risk,
-            "medium_risk_count": medium_risk,
-            "low_risk_count": low_risk,
-            "overdue_count": overdue,
-            "pending_count": pending,
-            "paid_count": 0,
-            "payables_count": processed['summary']['payables_count'],
-            "receivables_count": processed['summary']['receivables_count'],
-            "accepts_partial_count": accepts_partial,
-            "total_payables_amount": processed['summary']['total_payables'],
-            "total_receivables_amount": processed['summary']['total_receivables'],
-            "total_penalties": processed['summary']['total_penalties'],
-            "avg_risk_score": sum(p.get('risk_score', 0) for p in payables) / max(len(payables), 1),
-            "cash_balance": get_cash_balance()
-        }
-        
-    except Exception as e:
-        logger.error(f"Error calculating stats: {e}")
-        return {
-            "total_transactions": 0,
-            "total_amount": 0,
-            "high_risk_count": 0,
-            "medium_risk_count": 0,
-            "low_risk_count": 0,
-            "overdue_count": 0,
-            "pending_count": 0,
-            "paid_count": 0,
-            "payables_count": 0,
-            "receivables_count": 0,
-            "accepts_partial_count": 0,
-            "total_payables_amount": 0,
-            "total_receivables_amount": 0,
-            "total_penalties": 0,
-            "avg_risk_score": 0,
-            "cash_balance": get_cash_balance()
-        }
-
+    """Calculate comprehensive dashboard statistics from transactions"""
+    transactions = get_transactions(limit=1000)
+    
+    total_transactions = len(transactions)
+    total_amount = sum(t.get('amount', 0) for t in transactions)
+    
+    # Risk distribution
+    high_risk = sum(1 for t in transactions if t.get('risk_score', 0) >= 0.7)
+    medium_risk = sum(1 for t in transactions if 0.4 <= t.get('risk_score', 0) < 0.7)
+    low_risk = sum(1 for t in transactions if t.get('risk_score', 0) < 0.4)
+    
+    # Status distribution
+    overdue = sum(1 for t in transactions if t.get('days_late', 0) > 0)
+    pending = sum(1 for t in transactions if t.get('status') == 'pending')
+    paid = sum(1 for t in transactions if t.get('status') == 'paid')
+    
+    # Type distribution
+    payables = sum(1 for t in transactions if t.get('transaction_type') == 'payable')
+    receivables = sum(1 for t in transactions if t.get('transaction_type') == 'receivable')
+    
+    # Partial payment stats
+    accepts_partial = sum(1 for t in transactions if t.get('accepts_partial', False))
+    
+    # Payment strategy distribution
+    must_pay_count = sum(1 for t in transactions if t.get('payment_category') == 'must_pay')
+    can_negotiate_count = sum(1 for t in transactions if t.get('payment_category') == 'can_negotiate')
+    can_delay_count = sum(1 for t in transactions if t.get('payment_category') == 'can_delay')
+    
+    # Financial totals
+    total_payables_amount = sum(t.get('amount', 0) for t in transactions if t.get('transaction_type') == 'payable')
+    total_receivables_amount = sum(t.get('amount', 0) for t in transactions if t.get('transaction_type') == 'receivable')
+    total_penalties = sum(t.get('penalty_analysis', {}).get('total_penalty', 0) for t in transactions)
+    
+    # Average risk score
+    avg_risk_score = sum(t.get('risk_score', 0) for t in transactions) / max(total_transactions, 1)
+    
+    return {
+        "total_transactions": total_transactions,
+        "total_amount": total_amount,
+        "high_risk_count": high_risk,
+        "medium_risk_count": medium_risk,
+        "low_risk_count": low_risk,
+        "overdue_count": overdue,
+        "pending_count": pending,
+        "paid_count": paid,
+        "payables_count": payables,
+        "receivables_count": receivables,
+        "accepts_partial_count": accepts_partial,
+        "must_pay_count": must_pay_count,
+        "can_negotiate_count": can_negotiate_count,
+        "can_delay_count": can_delay_count,
+        "total_payables_amount": total_payables_amount,
+        "total_receivables_amount": total_receivables_amount,
+        "total_penalties": total_penalties,
+        "avg_risk_score": avg_risk_score,
+        "cash_balance": get_cash_balance()
+    }
 
 # ------------------------------
 # API Routes
@@ -462,13 +467,15 @@ def health():
         "modules": {
             "decision_engine": "loaded",
             "communication_engine": "loaded",
-            "financial_processor": "loaded"
+            "payment_strategy_analyzer": "loaded",
+            "financial_processor": "loaded",
+            "parsers": "loaded"
         }
     })
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
-    """Analyze a transaction"""
+    """Analyze a transaction with payment strategy"""
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data provided"}), 400
@@ -481,7 +488,7 @@ def analyze():
 
 @app.route('/api/upload', methods=['POST'])
 def upload():
-    """Upload and parse a file, return parsed data for user to edit"""
+    """Upload and parse a file with payment strategy"""
     if 'file' not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
     
@@ -503,12 +510,36 @@ def upload():
         else:
             return jsonify({"error": f"Unsupported file type: {ext}"}), 400
         
-        # Return the parsed data as editable JSON
-        return jsonify({
-            "success": True, 
-            "data": parsed,
-            "message": "Data parsed successfully. Please review and edit if needed before confirming."
-        })
+        # Process all obligations
+        obligations = parsed.get('obligations', [])
+        results = []
+        
+        for ob in obligations:
+            counterparty = ob.get('counterparty', {})
+            
+            transaction = {
+                "counterparty_name": counterparty.get('name', 'Unknown'),
+                "counterparty_type": counterparty.get('type', 'unknown'),
+                "amount": ob.get('amount', 0),
+                "due_date": ob.get('due_date'),
+                "payment_date": ob.get('payment_date'),
+                "description": ob.get('description', ''),
+                "status": "overdue" if ob.get('days_late', 0) > 0 else "pending",
+                "accepts_partial": ob.get('partial_payment', {}).get('accepts_partial', True),
+                "minimum_partial_pct": ob.get('partial_payment', {}).get('minimum_pct', 40)
+            }
+            
+            result = analyze_transaction(transaction)
+            results.append(result)
+        
+        if len(results) == 1:
+            return jsonify(results[0])
+        else:
+            return jsonify({
+                "payments": results,
+                "cash_balance": parsed.get('cash_balance', get_cash_balance()),
+                "total_obligations": len(results)
+            })
             
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -527,7 +558,6 @@ def confirm_upload():
         return jsonify({"error": "No obligations data provided"}), 400
     
     try:
-        # Process each obligation
         results = []
         for ob in data.get('obligations', []):
             counterparty = ob.get('counterparty', {})
@@ -578,6 +608,52 @@ def dashboard_stats():
     stats = calculate_dashboard_stats()
     return jsonify(stats)
 
+@app.route('/api/dashboard-data', methods=['GET'])
+def get_dashboard_data():
+    """Get comprehensive dashboard data with payment strategies"""
+    try:
+        transactions = get_transactions(limit=100)
+        
+        # Add payment strategy to each transaction if missing
+        for t in transactions:
+            if 'payment_category' not in t:
+                due_date = t.get('due_date')
+                due_date_obj = None
+                if due_date:
+                    try:
+                        due_date_obj = datetime.strptime(due_date, '%Y-%m-%d').date()
+                    except:
+                        due_date_obj = datetime.today().date()
+                else:
+                    due_date_obj = datetime.today().date()
+                
+                strategy = PaymentStrategyAnalyzer.analyze_payment(
+                    t.get('counterparty_type', 'unknown'),
+                    t.get('amount', 0),
+                    due_date_obj,
+                    t.get('days_late', 0)
+                )
+                
+                t['payment_category'] = strategy.get('category')
+                t['can_negotiate'] = strategy.get('can_negotiate', False)
+                t['can_delay'] = strategy.get('can_delay', False)
+                t['can_partial'] = strategy.get('can_partial', False)
+                t['grace_days'] = strategy.get('grace_days', 0)
+                t['penalty_rate'] = strategy.get('penalty_rate', 0)
+                t['payment_action'] = strategy.get('payment_action')
+                t['recommendation'] = strategy.get('recommendation')
+                t['risks'] = strategy.get('risks', [])
+                t['message_template'] = strategy.get('message_template', '')
+        
+        return jsonify({
+            "status": "success",
+            "payments": transactions,
+            "cash_balance": get_cash_balance()
+        })
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/api/partial-summary', methods=['GET'])
 def partial_summary():
     """Get partial payment summary"""
@@ -594,7 +670,7 @@ def partial_summary():
 
 @app.route('/api/generate-message', methods=['POST'])
 def generate_message():
-    """Generate a communication message with AI enhancements"""
+    """Generate a communication message with payment strategy context"""
     data = request.get_json()
     transaction = data.get('transaction', {})
     action = data.get('action', 'request_extension')
@@ -604,92 +680,63 @@ def generate_message():
         return jsonify({"error": "Transaction data required"}), 400
     
     try:
-        # Get relationship profile
+        # Use communication engine
         profile = communication_engine.get_relationship_profile(
             transaction.get('counterparty_type', 'unknown')
         )
         
-        # Prepare obligation details
+        # Get payment strategy for better context
+        due_date = transaction.get('due_date')
+        due_date_obj = None
+        if due_date:
+            try:
+                due_date_obj = datetime.strptime(due_date, '%Y-%m-%d').date()
+            except:
+                due_date_obj = datetime.today().date()
+        else:
+            due_date_obj = datetime.today().date()
+        
+        strategy = PaymentStrategyAnalyzer.analyze_payment(
+            transaction.get('counterparty_type', 'unknown'),
+            transaction.get('amount', 0),
+            due_date_obj,
+            transaction.get('days_late', 0)
+        )
+        
         obligation = {
             "party": transaction.get('counterparty_name', 'Vendor'),
             "amount": transaction.get('amount', 0),
             "due_date": transaction.get('due_date', ''),
             "days_late": transaction.get('days_late', 0),
-            "type": transaction.get('counterparty_type', 'unknown'),
-            "risk_score": transaction.get('risk_score', 0),
-            "priority": transaction.get('priority', 'Medium')
+            "type": transaction.get('counterparty_type', 'unknown')
         }
         
-        # Generate context-aware messages based on action
-        if action == 'request_extension':
-            # Smart extension request based on days late
-            if obligation['days_late'] > 0:
-                subject = f"Request for Payment Extension - {obligation['party']}"
-                email = f"""Dear {obligation['party']},
-
-I hope this email finds you well.
-
-I am writing regarding the payment of {format_currency(obligation['amount'])} which is currently {obligation['days_late']} days overdue. Due to [brief reason, e.g., unexpected cash flow constraints / bank delays], I would like to request a short extension.
-
-Could we please extend the payment deadline by [X] days? I propose making the payment by [new date].
-
-{extra_context}
-
-I value our business relationship and appreciate your understanding. Please let me know if this works for you.
-
-Best regards,
-Finance Team"""
-            else:
-                subject = f"Payment Schedule Request - {obligation['party']}"
-                email = f"""Dear {obligation['party']},
-
-I hope you're doing well.
-
-I'm writing to discuss the upcoming payment of {format_currency(obligation['amount'])} due on {obligation['due_date']}. To better align with our cash flow, I'd like to request a payment extension of [X] days.
-
-{extra_context}
-
-Thank you for your flexibility. I look forward to your response.
-
-Best regards,
-Finance Team"""
-                
-        elif action == 'propose_partial':
-            min_pct = transaction.get('minimum_partial_pct', 40)
+        # Use strategy message template if available
+        if action == 'request_extension' and strategy.get('message_template'):
+            email = strategy.get('message_template')
+            subject = f"Request for Payment Extension - {obligation['party']}"
+        elif action == 'propose_partial' and strategy.get('can_partial'):
+            email = communication_engine.generate_partial_payment_proposal(
+                obligation, profile,
+                proposed_pct=transaction.get('minimum_partial_pct', 40),
+                remaining_plan={"installments": 2, "days": 15}
+            )
             subject = f"Proposed Partial Payment Arrangement - {obligation['party']}"
-            email = f"""Dear {obligation['party']},
-
-I hope this email finds you well.
-
-Regarding the outstanding amount of {format_currency(obligation['amount'])}, I'd like to propose a partial payment arrangement to settle this efficiently.
-
-Proposal:
-• Immediate payment: {min_pct}% ({format_currency(obligation['amount'] * min_pct / 100)})
-• Balance payment: Remaining {100 - min_pct}% within 15 days
-
-{extra_context}
-
-This arrangement helps maintain cash flow while ensuring we meet our commitment. Please let me know if this works for you.
-
-Best regards,
-Finance Team"""
-                
+        elif action == 'request_extension':
+            email = communication_engine.generate_payment_extension_request(
+                obligation, profile, suggested_days=strategy.get('grace_days', 10)
+            )
+            subject = f"Request for Payment Extension - {obligation['party']}"
         elif action == 'payment_confirmation':
             subject = f"Payment Confirmation - {obligation['party']}"
             email = f"""Dear {obligation['party']},
 
 This is to confirm that payment of {format_currency(obligation['amount'])} has been processed and should reflect in your account shortly.
 
-Transaction Reference: [Reference Number]
-Payment Date: {datetime.now().strftime('%Y-%m-%d')}
-
-{extra_context}
-
-Thank you for your patience and cooperation.
+Thank you for your business.
 
 Best regards,
 Finance Team"""
-                
         elif action == 'apology_delay':
             subject = f"Apology for Payment Delay - {obligation['party']}"
             email = f"""Dear {obligation['party']},
@@ -702,38 +749,16 @@ I confirm that the payment will be processed by [date]. Thank you for your patie
 
 Best regards,
 Finance Team"""
-                
-        elif action == 'demand_payment':
-            subject = f"Payment Reminder - {obligation['party']}"
-            email = f"""Dear {obligation['party']},
-
-This is a reminder regarding the outstanding payment of {format_currency(obligation['amount'])} which is now {obligation['days_late']} days overdue.
-
-Please arrange to process this payment by [date] to avoid any further escalation.
-
-{extra_context}
-
-If you have already made the payment, please disregard this notice. Otherwise, please confirm when we can expect the payment.
-
-Best regards,
-Finance Team"""
-                
         else:
-            subject = f"Payment Related Communication - {obligation['party']}"
-            email = f"""Dear {obligation['party']},
+            subject = f"Payment Reminder - {obligation['party']}"
+            email = strategy.get('message_template') or f"""Dear {obligation['party']},
 
-I'm writing regarding the transaction of {format_currency(obligation['amount'])}.
+This is a reminder that payment of {format_currency(obligation['amount'])} is now {obligation.get('days_late', 0)} days overdue.
 
-{extra_context}
-
-Please let me know if you have any questions.
+Please process at your earliest convenience.
 
 Best regards,
 Finance Team"""
-        
-        # Add risk-based urgency if applicable
-        if obligation['risk_score'] > 0.7:
-            email += f"\n\n⚠️ Note: This payment is flagged as high priority in our system."
         
         return jsonify({"subject": subject, "body": email})
         
@@ -741,18 +766,12 @@ Finance Team"""
         logger.error(f"Message generation error: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ------------------------------
-# Chat Endpoint with Festival Detection
-# ------------------------------
-
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """Chat endpoint with festival detection and Groq integration"""
+    """Chat endpoint with payment strategy awareness"""
     data = request.get_json()
     messages = data.get('messages', [])
     transaction = data.get('transaction', {})
-    festival_context = data.get('festivalContext', [])
-    custom_prompt = data.get('prompt', '')
     
     if not messages:
         return jsonify({"error": "Messages required"}), 400
@@ -760,144 +779,112 @@ def chat():
     try:
         last_message = messages[-1]['content'].lower() if messages else ""
         
-        # Check if this is a festival-related question
-        festival_keywords = ['festival', 'diwali', 'holi', 'ganesh', 'navratri', 'eid', 
-                            'christmas', 'new year', 'celebration', 'gift', 'bonus']
-        is_festival_question = any(keyword in last_message for keyword in festival_keywords)
-        
-        # If we have festival context and it's a festival question, provide detailed advice
-        if festival_context and is_festival_question:
-            # Build festival-specific response
-            festivals_str = ""
-            for f in festival_context:
-                festivals_str += f"\n- **{f.get('name')}**: {f.get('date')} ({f.get('daysAway')} days away, Impact: {f.get('impact')})"
-            
-            response = f"""🎉 **Festival Financial Planning**
-
-Detected upcoming festivals:
-{festivals_str}
-
-**Key Recommendations:**
-
-1. **Cash Reserve Strategy**
-   • Set aside {format_currency(min(50000, transaction.get('amount', 50000) if transaction else 50000))} for festival expenses
-   • Build buffer of 30-40% above normal operating cash
-
-2. **Payment Timing**
-   • Pay critical vendors 7-10 days before festival
-   • Schedule NEFT/RTGS before bank holidays
-   • Use UPI for urgent payments during festival week
-
-3. **Vendor Negotiation**
-   • Request extensions from flexible vendors
-   • Offer partial payments (40-50%) before festival
-   • Communicate early about payment schedules
-
-4. **Collection Strategy**
-   • Accelerate customer collections before festival week
-   • Send reminders 2 weeks before festival
-   • Offer small discounts for early payments
-
-Would you like me to draft a specific email for any of these festivals?"""
-            
-            return jsonify({"reply": response})
-        
-        # Check for Groq integration (if available)
-        elif custom_prompt and os.getenv('OPENROUTER_API_KEY'):
-            # Use Groq for advanced responses
-            try:
-                from groq import Groq
-                groq_client = Groq(api_key=os.getenv('OPENROUTER_API_KEY'))
-                
-                # Build system prompt
-                system_prompt = f"""You are PayWise AI, a financial assistant for small businesses.
-                Current Date: {datetime.now().strftime('%Y-%m-%d')}
-
-{festival_context and f"Upcoming Festivals: {festival_context}" or ""}
-
-Provide practical, actionable financial advice. Be concise and professional."""
-                
-                completion = groq_client.chat.completions.create(
-                    model="mixtral-8x7b-32768",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": custom_prompt or last_message}
-                    ],
-                    temperature=0.7,
-                    max_tokens=500
-                )
-                
-                response = completion.choices[0].message.content
-                return jsonify({"reply": response})
-                
-            except Exception as e:
-                logger.error(f"Groq error: {e}")
-                # Fall back to regular response
-        
-        # Regular response handling (fallback)
-        if "risk" in last_message and transaction:
-            risk = transaction.get('risk_score', 0)
-            priority = transaction.get('priority', 'Medium')
-            response = f"**Risk Analysis**\n\nRisk Score: {risk:.2f}/1.00 ({priority} Priority)\n\n"
-            if risk > 0.7:
-                response += "⚠️ **HIGH RISK** - Immediate action recommended.\nConsider paying immediately or contacting the counterparty urgently."
-            elif risk > 0.4:
-                response += "🟡 **MEDIUM RISK** - Monitor closely.\nConsider negotiating an extension or partial payment."
+        # Get payment strategy if transaction exists
+        strategy = None
+        if transaction:
+            due_date = transaction.get('due_date')
+            due_date_obj = None
+            if due_date:
+                try:
+                    due_date_obj = datetime.strptime(due_date, '%Y-%m-%d').date()
+                except:
+                    due_date_obj = datetime.today().date()
             else:
-                response += "✅ **LOW RISK** - Maintain regular schedule.\nPay on time to maintain good relationship."
+                due_date_obj = datetime.today().date()
+            
+            strategy = PaymentStrategyAnalyzer.analyze_payment(
+                transaction.get('counterparty_type', 'unknown'),
+                transaction.get('amount', 0),
+                due_date_obj,
+                transaction.get('days_late', 0)
+            )
+        
+        if "negotiate" in last_message or "extension" in last_message:
+            if strategy and strategy.get('can_negotiate'):
+                response = f"**Negotiation Strategy**\n\n{strategy.get('recommendation')}\n\n"
+                response += f"**Message Template:**\n{strategy.get('message_template', '')}\n\n"
+                response += "Would you like me to draft a formal extension request?"
+            else:
+                response = "This payment may not be negotiable. Check the counterparty type and due date."
+                
+        elif "partial" in last_message:
+            if strategy and strategy.get('can_partial'):
+                min_pct = transaction.get('minimum_partial_pct', 40)
+                response = f"**Partial Payment Strategy**\n\n• Offer {min_pct}% now, remaining in {strategy.get('grace_days', 15)} days\n"
+                response += f"• {strategy.get('recommendation')}\n\n"
+                response += "Would you like me to draft a partial payment proposal?"
+            else:
+                response = "Partial payment may not be accepted for this counterparty type."
+                
+        elif "delay" in last_message or "postpone" in last_message:
+            if strategy and strategy.get('can_delay'):
+                response = f"**Delay Strategy**\n\n{strategy.get('recommendation')}\n\n"
+                response += f"Grace period: {strategy.get('grace_days', 0)} days\n"
+                response += "Make sure to communicate clearly to maintain the relationship."
+            else:
+                response = "This payment should not be delayed. Pay on time to avoid consequences."
+                
+        elif "risk" in last_message:
+            if transaction:
+                risk = transaction.get('risk_score', 0)
+                priority = transaction.get('priority', 'Medium')
+                response = f"**Risk Analysis**\n\nRisk Score: {risk:.2f}/1.00 ({priority} Priority)\n\n"
+                if strategy:
+                    response += f"**Payment Category:** {strategy.get('category', 'unknown')}\n"
+                    response += f"**Can Negotiate:** {'Yes' if strategy.get('can_negotiate') else 'No'}\n"
+                    response += f"**Can Delay:** {'Yes' if strategy.get('can_delay') else 'No'}\n\n"
+                if risk > 0.7:
+                    response += "⚠️ **HIGH RISK** - Immediate action recommended.\n"
+                elif risk > 0.4:
+                    response += "🟡 **MEDIUM RISK** - Monitor closely.\n"
+                else:
+                    response += "✅ **LOW RISK** - Maintain regular schedule.\n"
+            else:
+                response = "No transaction selected. Please analyze a transaction first."
                 
         elif "penalty" in last_message and transaction:
             penalty = transaction.get('penalty_analysis', {}).get('total_penalty', 0)
             days_late = transaction.get('days_late', 0)
-            response = f"**Penalty Analysis**\n\nCurrent Penalty: ₹{penalty:,.2f}\nDays Late: {days_late}\n\n"
+            response = f"**Penalty Analysis**\n\nCurrent Penalty: {format_currency(penalty)}\nDays Late: {days_late}\n\n"
             if days_late > 0:
-                response += f"⚠️ Paying today would avoid additional penalties of ₹{penalty * 0.3:,.2f} per week."
+                response += f"⚠️ Paying today would avoid additional penalties.\n"
+                if strategy and strategy.get('can_negotiate'):
+                    response += f"\n💡 You can also request extension to waive penalties."
             else:
                 response += "✅ No penalty incurred yet. Pay before due date to avoid penalties."
                 
-        elif "partial" in last_message:
-            min_pct = transaction.get('minimum_partial_pct', 40) if transaction else 40
-            response = f"**Partial Payment Strategy**\n\n• Offer {min_pct}% now, remaining in 15 days\n• Most vendors accept this arrangement\n• Maintains relationship and cash flow\n\nWould you like me to draft a partial payment proposal?"
-            
+        elif "message" in last_message or "template" in last_message:
+            if strategy and strategy.get('message_template'):
+                response = f"**Message Template**\n\n{strategy.get('message_template')}\n\n"
+                response += "You can copy and customize this message."
+            else:
+                response = "No specific message template available. Would you like me to draft a custom message?"
+                
         elif "hello" in last_message or "hi" in last_message:
-            response = """👋 **Hello! I'm PayWise AI**
-
-I can help you with:
-• **Risk Analysis** - Understand your transaction risk
-• **Penalty Calculation** - Calculate late payment penalties
-• **Payment Strategies** - Get recommendations
-• **Festival Planning** - Prepare for upcoming festivals
-• **Communication Drafting** - Create professional emails
-
-What would you like to know?"""
-            
-        elif festival_context and not is_festival_question:
-            # Suggest festival planning even if not asked
-            festivals_list = [f.get('name') for f in festival_context[:2]]
-            response = f"""📅 **Did you know?** Upcoming festivals: {', '.join(festivals_list)}.
-
-Would you like me to help you plan your finances for these festivals? I can provide:
-• Cash reserve recommendations
-• Vendor payment scheduling
-• Festival expense budgeting
-• Collection strategies
-
-Type "festival planning" to get started!"""
+            response = "👋 **Hello! I'm PayWise AI**\n\nI can help you with:\n"
+            response += "• **Payment Strategy** - Understand if you can negotiate, delay, or pay partial\n"
+            response += "• **Risk Analysis** - Understand your transaction risk\n"
+            response += "• **Penalty Calculation** - Calculate late payment penalties\n"
+            response += "• **Message Templates** - Get communication templates\n"
+            response += "• **Negotiation Advice** - Get tips for extension requests\n\n"
+            response += "What would you like to know?"
             
         else:
-            response = "I can help you analyze your financial transactions. Ask me about:\n• Risk analysis\n• Penalty calculations\n• Payment strategies\n• Festival planning\n• Email drafting"
+            response = f"I can help you analyze your payment. "
+            if strategy:
+                response += f"This payment is **{strategy.get('category', 'unknown')}**. "
+                response += f"{strategy.get('recommendation', '')}\n\n"
+            response += "Ask me about: negotiation, partial payment, delay options, or message templates."
         
         return jsonify({"reply": response})
         
     except Exception as e:
         logger.error(f"Chat error: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/demo', methods=['GET'])
 def demo():
-    """Return demo transaction"""
+    """Return demo transaction with payment strategy"""
     demo_data = {
         "counterparty_name": "Income Tax Department",
         "counterparty_type": "tax_authority",
@@ -909,6 +896,107 @@ def demo():
         "minimum_partial_pct": 100
     }
     return jsonify(analyze_transaction(demo_data))
+
+@app.route('/api/demo-batch', methods=['GET'])
+def demo_batch():
+    """Return multiple demo transactions for dashboard testing"""
+    demo_payments = [
+        {
+            "counterparty_name": "Income Tax Department",
+            "counterparty_type": "tax_authority",
+            "amount": 50000,
+            "due_date": (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d'),
+            "days_late": 5,
+            "priority": "critical",
+            "risk_score": 0.95
+        },
+        {
+            "counterparty_name": "Raj Fabrics",
+            "counterparty_type": "vendor",
+            "amount": 25000,
+            "due_date": datetime.now().strftime('%Y-%m-%d'),
+            "days_late": 0,
+            "priority": "medium",
+            "risk_score": 0.4
+        },
+        {
+            "counterparty_name": "HDFC Bank",
+            "counterparty_type": "bank",
+            "amount": 15000,
+            "due_date": (datetime.now() + timedelta(days=3)).strftime('%Y-%m-%d'),
+            "days_late": 0,
+            "priority": "high",
+            "risk_score": 0.7
+        },
+        {
+            "counterparty_name": "Friend - Rajesh",
+            "counterparty_type": "friend",
+            "amount": 10000,
+            "due_date": (datetime.now() + timedelta(days=15)).strftime('%Y-%m-%d'),
+            "days_late": 0,
+            "priority": "low",
+            "risk_score": 0.1
+        },
+        {
+            "counterparty_name": "Electricity Board",
+            "counterparty_type": "utility",
+            "amount": 3500,
+            "due_date": (datetime.now() + timedelta(days=10)).strftime('%Y-%m-%d'),
+            "days_late": 0,
+            "priority": "medium",
+            "risk_score": 0.3
+        },
+        {
+            "counterparty_name": "Office Rent",
+            "counterparty_type": "rent",
+            "amount": 20000,
+            "due_date": (datetime.now() + timedelta(days=5)).strftime('%Y-%m-%d'),
+            "days_late": 0,
+            "priority": "medium",
+            "risk_score": 0.35
+        },
+        {
+            "counterparty_name": "Employee Salary",
+            "counterparty_type": "employee",
+            "amount": 45000,
+            "due_date": (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%d'),
+            "days_late": 0,
+            "priority": "high",
+            "risk_score": 0.8
+        }
+    ]
+    
+    results = []
+    for payment in demo_payments:
+        due_date = datetime.strptime(payment['due_date'], '%Y-%m-%d').date()
+        
+        strategy = PaymentStrategyAnalyzer.analyze_payment(
+            payment['counterparty_type'],
+            payment['amount'],
+            due_date,
+            payment.get('days_late', 0)
+        )
+        
+        results.append({
+            **payment,
+            'payment_category': strategy.get('category'),
+            'can_negotiate': strategy.get('can_negotiate', False),
+            'can_delay': strategy.get('can_delay', False),
+            'can_partial': strategy.get('can_partial', False),
+            'grace_days': strategy.get('grace_days', 0),
+            'penalty_rate': strategy.get('penalty_rate', 0),
+            'payment_action': strategy.get('payment_action'),
+            'recommendation': strategy.get('recommendation'),
+            'risks': strategy.get('risks', []),
+            'message_template': strategy.get('message_template', ''),
+            'days_until_due': max(0, (due_date - datetime.today().date()).days)
+        })
+    
+    return jsonify({
+        "status": "success",
+        "payments": results,
+        "cash_balance": get_cash_balance()
+    })
 
 @app.route('/api/predictive-analysis', methods=['GET'])
 def predictive_analysis():
@@ -996,7 +1084,7 @@ def apply_partial():
             
             return jsonify({
                 "success": True,
-                "message": f"Applied {percentage}% partial payment. Remaining: ₹{t['amount']:,.2f}"
+                "message": f"Applied {percentage}% partial payment. Remaining: {format_currency(t['amount'])}"
             })
         else:
             return jsonify({"success": False, "error": "Transaction not found"}), 404
@@ -1021,6 +1109,30 @@ def reorder_payments():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/get-saved-order', methods=['GET'])
+def get_saved_order():
+    """Get saved payment order"""
+    try:
+        ORDER_FILE = DATA_DIR / 'payment_order.json'
+        if ORDER_FILE.exists():
+            with open(ORDER_FILE, 'r') as f:
+                data = json.load(f)
+                return jsonify({"success": True, "order": data.get('order', [])})
+        return jsonify({"success": True, "order": []})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/clear-saved-order', methods=['POST'])
+def clear_saved_order():
+    """Clear saved payment order"""
+    try:
+        ORDER_FILE = DATA_DIR / 'payment_order.json'
+        if ORDER_FILE.exists():
+            ORDER_FILE.unlink()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/update-cash', methods=['POST'])
 def update_cash():
     """Update cash balance"""
@@ -1028,7 +1140,7 @@ def update_cash():
     cash_balance = data.get('cash_balance', 0)
     
     try:
-        # Update cash balance in separate file
+        # Update cash balance
         set_cash_balance(cash_balance)
         
         # Update processed data
@@ -1044,6 +1156,80 @@ def update_cash():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/get-cash', methods=['GET'])
+def get_cash():
+    """Get current cash balance"""
+    return jsonify({
+        "success": True,
+        "cash_balance": get_cash_balance()
+    })
+
+@app.route('/api/initialize-cash', methods=['POST'])
+def initialize_cash():
+    """Initialize or reset cash balance"""
+    data = request.get_json()
+    initial_cash = data.get('cash_balance', 100000)
+    
+    try:
+        set_cash_balance(initial_cash)
+        
+        if PROCESSED_DATA_FILE.exists():
+            with open(PROCESSED_DATA_FILE, 'r') as f:
+                processed = json.load(f)
+            processed['cash_balance'] = initial_cash
+            with open(PROCESSED_DATA_FILE, 'w') as f:
+                json.dump(processed, f, indent=2, default=str)
+        
+        return jsonify({
+            "success": True,
+            "cash_balance": initial_cash,
+            "message": f"Cash balance initialized to {format_currency(initial_cash)}"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/cleanup-duplicates', methods=['POST'])
+def cleanup_duplicates():
+    """Remove duplicate transactions from the database"""
+    try:
+        with open(TRANSACTIONS_FILE, 'r') as f:
+            transactions = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return jsonify({"error": "No transactions found"}), 404
+    
+    original_count = len(transactions)
+    
+    seen = set()
+    unique_transactions = []
+    removed_count = 0
+    
+    for t in transactions:
+        key = (
+            t.get("counterparty_name", ""),
+            t.get("amount", 0),
+            t.get("due_date", "")
+        )
+        
+        if key not in seen:
+            seen.add(key)
+            unique_transactions.append(t)
+        else:
+            removed_count += 1
+    
+    with open(TRANSACTIONS_FILE, 'w') as f:
+        json.dump(unique_transactions, f, indent=2, default=str)
+    
+    process_all_transactions()
+    
+    return jsonify({
+        "success": True,
+        "original_count": original_count,
+        "unique_count": len(unique_transactions),
+        "removed_count": removed_count,
+        "message": f"Removed {removed_count} duplicate transactions"
+    })
+
 @app.route('/api/calculate-projection', methods=['POST'])
 def calculate_projection():
     """Calculate real-time projection for custom payment order"""
@@ -1052,33 +1238,26 @@ def calculate_projection():
     cash_balance = data.get('cash_balance', get_cash_balance())
     
     try:
-        # Load processed data for full context
         if PROCESSED_DATA_FILE.exists():
             with open(PROCESSED_DATA_FILE, 'r') as f:
                 processed = json.load(f)
         else:
             processed = process_all_transactions()
         
-        # Create mapping of transactions by ID
         payables = processed.get('payables', [])
         transaction_map = {}
         
-        # Build a comprehensive map with multiple ID formats
         for p in payables:
-            # Store by transaction_id
             if p.get('transaction_id'):
                 transaction_map[p.get('transaction_id')] = p
-            # Also store by id if exists
             if p.get('id'):
                 transaction_map[p.get('id')] = p
         
-        # Also add transactions from the original transactions file if needed
         try:
             with open(TRANSACTIONS_FILE, 'r') as f:
                 all_transactions = json.load(f)
                 for t in all_transactions:
                     if t.get('id'):
-                        # Convert to format similar to payables
                         converted = {
                             'transaction_id': t.get('id'),
                             'party': t.get('counterparty_name'),
@@ -1097,24 +1276,15 @@ def calculate_projection():
         except:
             pass
         
-        # Extract transaction IDs - handle both string IDs and objects with transaction_id
         order_ids = []
         for item in order_data:
             if isinstance(item, dict):
-                # If it's a dictionary, try to get the transaction_id
                 tid = item.get('transaction_id') or item.get('id')
                 if tid:
                     order_ids.append(tid)
-                else:
-                    # If no ID found, log warning
-                    logger.warning(f"Item without ID: {item}")
             elif isinstance(item, str):
-                # If it's a string, use it directly
                 order_ids.append(item)
-            else:
-                logger.warning(f"Unexpected item type: {type(item)}")
         
-        # Calculate projection with partial payment support
         remaining_cash = cash_balance
         total_penalties = 0
         obligations_fulfilled = 0
@@ -1126,17 +1296,13 @@ def calculate_projection():
         total_obligations_amount = 0
         valid_obligations = []
         
-        # First pass: get valid obligations and total amount
         for tid in order_ids:
             t = transaction_map.get(tid)
             if t:
                 amount = t.get('amount', 0)
                 total_obligations_amount += amount
                 valid_obligations.append(t)
-            else:
-                logger.warning(f"Transaction not found: {tid}")
         
-        # Track payments in order
         payment_plan = []
         
         for idx, t in enumerate(valid_obligations):
@@ -1146,7 +1312,6 @@ def calculate_projection():
             party = t.get('party', t.get('counterparty_name', 'Unknown'))
             cp_type = t.get('type', t.get('counterparty_type', 'unknown'))
             
-            # Get partial payment info
             partial = t.get('partial_payment', {})
             accepts_partial = partial.get('accepts_partial', True)
             min_pct = partial.get('minimum_pct', partial.get('minimum_partial_pct', 50))
@@ -1158,7 +1323,6 @@ def calculate_projection():
             paid_amount = 0
             
             if remaining_cash >= amount:
-                # Can pay full amount
                 remaining_cash -= amount
                 total_penalties += penalty
                 obligations_fulfilled += 1
@@ -1166,7 +1330,6 @@ def calculate_projection():
                 payment_status = "paid_full"
                 paid_amount = amount
             elif accepts_partial and remaining_cash >= min_amount:
-                # Can pay partial
                 pay_amount = min(suggested_amount, remaining_cash)
                 if pay_amount >= min_amount:
                     remaining_cash -= pay_amount
@@ -1182,7 +1345,6 @@ def calculate_projection():
                     risk_exposure += amount
                     payment_status = "unpaid_insufficient"
             else:
-                # Cannot pay at all
                 risk_exposure += amount
                 if accepts_partial:
                     payment_status = "unpaid_min_required"
@@ -1227,25 +1389,11 @@ def calculate_projection():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-    
-@app.route('/api/get-saved-order', methods=['GET'])
-def get_saved_order():
-    """Get saved payment order"""
-    try:
-        ORDER_FILE = DATA_DIR / 'payment_order.json'
-        if ORDER_FILE.exists():
-            with open(ORDER_FILE, 'r') as f:
-                data = json.load(f)
-                return jsonify({"success": True, "order": data.get('order', [])})
-        return jsonify({"success": True, "order": []})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/risk-analysis', methods=['GET'])
 def risk_analysis():
     """Get enhanced risk analysis with days to zero and cash flow projection"""
     try:
-        # Load processed data
         if PROCESSED_DATA_FILE.exists():
             with open(PROCESSED_DATA_FILE, 'r') as f:
                 processed = json.load(f)
@@ -1255,26 +1403,20 @@ def risk_analysis():
         if not processed:
             return jsonify({"success": False, "error": "No data found"}), 404
         
-        # Import risk engine
         from backend.engine.risk_engine import calculate_risk
         
-        # Calculate risk with partial payment consideration
         risk_report = calculate_risk(processed, consider_partial=True)
         
-        # Generate cash flow projection for graph (next 60 days)
         cash_flow_projection = []
         current_cash = processed.get('cash_balance', 0)
         payables = processed.get('payables', [])
         receivables = processed.get('receivables', [])
         
-        from datetime import datetime, timedelta
-        
-        for i in range(61):  # 60 days projection
+        for i in range(61):
             day = i
             date = datetime.today().date() + timedelta(days=i)
             daily_cash = current_cash
             
-            # Subtract payables due on this day
             for p in payables:
                 due_date = p.get('due_date')
                 if due_date:
@@ -1285,7 +1427,6 @@ def risk_analysis():
                     if due == date:
                         daily_cash -= p.get('amount', 0)
             
-            # Add receivables due on this day
             for r in receivables:
                 expected_date = r.get('expected_date')
                 if expected_date:
@@ -1312,102 +1453,7 @@ def risk_analysis():
         
     except Exception as e:
         logger.error(f"Risk analysis error: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-    
-
-    
-@app.route('/api/clear-saved-order', methods=['POST'])
-def clear_saved_order():
-    """Clear saved payment order"""
-    try:
-        ORDER_FILE = DATA_DIR / 'payment_order.json'
-        if ORDER_FILE.exists():
-            ORDER_FILE.unlink()
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/initialize-cash', methods=['POST'])
-def initialize_cash():
-    """Initialize or reset cash balance"""
-    data = request.get_json()
-    initial_cash = data.get('cash_balance', 100000)  # Default ₹1,00,000
-    
-    try:
-        # Set cash balance
-        set_cash_balance(initial_cash)
-        
-        # Update processed data
-        if PROCESSED_DATA_FILE.exists():
-            with open(PROCESSED_DATA_FILE, 'r') as f:
-                processed = json.load(f)
-            processed['cash_balance'] = initial_cash
-            with open(PROCESSED_DATA_FILE, 'w') as f:
-                json.dump(processed, f, indent=2, default=str)
-        
-        return jsonify({
-            "success": True,
-            "cash_balance": initial_cash,
-            "message": f"Cash balance initialized to {format_currency(initial_cash)}"
-        })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/get-cash', methods=['GET'])
-def get_cash():
-    """Get current cash balance"""
-    return jsonify({
-        "success": True,
-        "cash_balance": get_cash_balance()
-    })
-
-@app.route('/api/cleanup-duplicates', methods=['POST'])
-def cleanup_duplicates():
-    """Remove duplicate transactions from the database"""
-    try:
-        with open(TRANSACTIONS_FILE, 'r') as f:
-            transactions = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return jsonify({"error": "No transactions found"}), 404
-    
-    original_count = len(transactions)
-    
-    # Remove duplicates using the same logic as financial_processor
-    seen = set()
-    unique_transactions = []
-    removed_count = 0
-    
-    for t in transactions:
-        # Create key based on counterparty_name, amount, due_date
-        key = (
-            t.get("counterparty_name", ""),
-            t.get("amount", 0),
-            t.get("due_date", "")
-        )
-        
-        if key not in seen:
-            seen.add(key)
-            unique_transactions.append(t)
-        else:
-            removed_count += 1
-    
-    # Save back only unique transactions
-    with open(TRANSACTIONS_FILE, 'w') as f:
-        json.dump(unique_transactions, f, indent=2, default=str)
-    
-    # Reprocess all data
-    process_all_transactions()
-    
-    return jsonify({
-        "success": True,
-        "original_count": original_count,
-        "unique_count": len(unique_transactions),
-        "removed_count": removed_count,
-        "message": f"Removed {removed_count} duplicate transactions"
-    })
 
 # ------------------------------
 # Run the app
@@ -1422,6 +1468,7 @@ if __name__ == '__main__':
     print(f"📄 Processed data: {PROCESSED_DATA_FILE}")
     print(f"💰 Initial cash balance: {format_currency(get_cash_balance())}")
     print(f"🔑 OpenRouter API: {'✅ Configured' if os.getenv('OPENROUTER_API_KEY') else '⚠️ Not set'}")
+    print(f"🔧 Payment Strategy Analyzer: ✅ Loaded")
     print(f"🌐 Server: http://localhost:5000")
     print("="*60 + "\n")
     
