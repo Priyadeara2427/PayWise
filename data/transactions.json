@@ -1,0 +1,235 @@
+[
+  {
+    "id": "7d03b6e8",
+    "counterparty_name": "Unknown",
+    "counterparty_type": "unknown",
+    "amount": 82.4,
+    "transaction_type": "payable",
+    "status": "pending",
+    "due_date": null,
+    "payment_date": null,
+    "days_late": 0,
+    "priority": "Medium",
+    "risk_score": 0.5,
+    "risk_factors": [],
+    "penalty_analysis": {
+      "total_penalty": 0.0,
+      "penalty_breakdown": [
+        {
+          "type": "Late Payment Penalty",
+          "calculation": "0.5% per day \u00d7 0 days",
+          "amount": 0.0
+        }
+      ],
+      "penalty_as_pct_of_amount": 0.0,
+      "total_effective_cost": 206.0
+    },
+    "recommended_actions": [
+      {
+        "action": "Propose Partial Payment (40% Now)",
+        "rationale": "Offer 40% now, balance in 15 days",
+        "urgency": "medium"
+      }
+    ],
+    "assumptions_made": [
+      "Due date not provided. Using current date for calculation.",
+      "Payment date not provided. Assuming not yet paid."
+    ],
+    "accepts_partial": true,
+    "minimum_partial_pct": 40,
+    "analyzed_at": "2026-03-26T01:46:31.396680",
+    "created_at": "2026-03-26T01:46:31.397680",
+    "partial_payment_applied": true,
+    "partial_percentage": 60,
+    "partial_amount_paid": 123.6
+  },
+  {
+    "id": "30daf9bb",
+    "counterparty_name": "Unknown",
+    "counterparty_type": "unknown",
+    "amount": 29.700000000000003,
+    "transaction_type": "payable",
+    "status": "pending",
+    "due_date": null,
+    "payment_date": null,
+    "days_late": 0,
+    "priority": "Medium",
+    "risk_score": 0.5,
+    "risk_factors": [],
+    "penalty_analysis": {
+      "total_penalty": 0.0,
+      "penalty_breakdown": [
+        {
+          "type": "Late Payment Penalty",
+          "calculation": "0.5% per day \u00d7 0 days",
+          "amount": 0.0
+        }
+      ],
+      "penalty_as_pct_of_amount": 0.0,
+      "total_effective_cost": 99.0
+    },
+    "recommended_actions": [
+      {
+        "action": "Propose Partial Payment (40% Now)",
+        "rationale": "Offer 40% now, balance in 15 days",
+        "urgency": "medium"
+      }
+    ],
+    "assumptions_made": [
+      "Due date not provided. Using current date for calculation.",
+      "Payment date not provided. Assuming not yet paid."
+    ],
+    "accepts_partial": true,
+    "minimum_partial_pct": 40,
+    "analyzed_at": "2026-03-26T01:46:53.305097",
+    "created_at": "2026-03-26T01:46:53.314097",
+    "partial_payment_applied": true,
+    "partial_percentage": 70,
+    "partial_amount_paid": 69.3
+  },
+  {
+    "id": "41272f02",
+    "counterparty_name": "Income Tax Department",
+    "counterparty_type": "tax_authority",
+    "amount": 50000.0,
+    "transaction_type": "payable",
+    "status": "overdue",
+    "due_date": "2026-03-21",
+    "payment_date": null,
+    "days_late": 5,
+    "priority": "High",
+    "risk_score": 0.8833333333333333,
+    "risk_factors": [
+      "Payment is 5 days overdue",
+      "Critical counterparty type - regulatory risk"
+    ],
+    "penalty_analysis": {
+      "total_penalty": 1250.0,
+      "penalty_breakdown": [
+        {
+          "type": "Late Payment Penalty",
+          "calculation": "0.5% per day \u00d7 5 days",
+          "amount": 1250.0
+        }
+      ],
+      "penalty_as_pct_of_amount": 2.5,
+      "total_effective_cost": 51250.0
+    },
+    "recommended_actions": [
+      {
+        "action": "Pay Immediately - Legal Risk",
+        "rationale": "Tax/government payment 5 days overdue. Legal penalties may apply.",
+        "urgency": "critical"
+      },
+      {
+        "action": "Prioritize This Payment",
+        "rationale": "High risk score (0.88) - immediate attention required",
+        "urgency": "high"
+      },
+      {
+        "action": "Avoid \u20b91,250 Penalty",
+        "rationale": "Pay within 25 days to avoid penalty",
+        "urgency": "medium"
+      }
+    ],
+    "assumptions_made": [
+      "Payment date not provided. Assuming not yet paid."
+    ],
+    "accepts_partial": false,
+    "minimum_partial_pct": 100,
+    "analyzed_at": "2026-03-26T01:50:11.604719",
+    "created_at": "2026-03-26T01:50:11.606080"
+  },
+  {
+    "id": "9185b63a",
+    "counterparty_name": "Fallback Strategy",
+    "counterparty_type": "vendor",
+    "amount": 175.0,
+    "transaction_type": "payable",
+    "status": "pending",
+    "due_date": "2026-03-25",
+    "payment_date": null,
+    "days_late": 1,
+    "priority": "Medium",
+    "risk_score": 0.5166666666666667,
+    "risk_factors": [
+      "Payment is 1 days overdue"
+    ],
+    "penalty_analysis": {
+      "total_penalty": 10.0,
+      "penalty_breakdown": [
+        {
+          "type": "Late Payment Penalty",
+          "calculation": "0.5% per day \u00d7 1 days",
+          "amount": 10.0
+        }
+      ],
+      "penalty_as_pct_of_amount": 0.5,
+      "total_effective_cost": 2010.0
+    },
+    "recommended_actions": [
+      {
+        "action": "Propose Partial Payment (40% Now)",
+        "rationale": "Offer 40% now, balance in 15 days",
+        "urgency": "medium"
+      },
+      {
+        "action": "Avoid \u20b910 Penalty",
+        "rationale": "Pay within 29 days to avoid penalty",
+        "urgency": "medium"
+      }
+    ],
+    "assumptions_made": [
+      "Payment date not provided. Assuming not yet paid."
+    ],
+    "accepts_partial": true,
+    "minimum_partial_pct": 40,
+    "analyzed_at": "2026-03-26T02:18:59.389470",
+    "created_at": "2026-03-26T02:18:59.391447",
+    "partial_payment_applied": true,
+    "partial_percentage": 50,
+    "partial_amount_paid": 175.0
+  },
+  {
+    "id": "1aebb356",
+    "counterparty_name": "ABC",
+    "counterparty_type": "government",
+    "amount": 40000.0,
+    "transaction_type": "payable",
+    "status": "pending",
+    "due_date": "2026-04-01",
+    "payment_date": null,
+    "days_late": 0,
+    "priority": "High",
+    "risk_score": 0.8,
+    "risk_factors": [
+      "Critical counterparty type - regulatory risk"
+    ],
+    "penalty_analysis": {
+      "total_penalty": 0.0,
+      "penalty_breakdown": [
+        {
+          "type": "Late Payment Penalty",
+          "calculation": "0.5% per day \u00d7 0 days",
+          "amount": 0.0
+        }
+      ],
+      "penalty_as_pct_of_amount": 0.0,
+      "total_effective_cost": 40000.0
+    },
+    "recommended_actions": [
+      {
+        "action": "Prioritize This Payment",
+        "rationale": "High risk score (0.80) - immediate attention required",
+        "urgency": "high"
+      }
+    ],
+    "assumptions_made": [
+      "Payment date not provided. Assuming not yet paid."
+    ],
+    "accepts_partial": false,
+    "minimum_partial_pct": 40,
+    "analyzed_at": "2026-03-26T02:27:37.630937",
+    "created_at": "2026-03-26T02:27:37.631904"
+  }
+]
